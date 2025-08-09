@@ -35,6 +35,14 @@ from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
+# --- PyInstaller를 위한 리소스 경로 설정 함수 ---
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    if hasattr(sys, '_MEIPASS'):
+        # PyInstaller로 패키징된 경우 임시 폴더의 경로를 사용
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 # --- 스타일시트 ---
 STYLESHEET = """
     QWidget { background-color: #F8F9FA; color: #212529; font-family: 'Malgun Gothic'; font-size: 10pt; }
@@ -176,7 +184,7 @@ class KeywordApp(QMainWindow):
         self.setGeometry(100, 100, 1400, 800)
         self.setStyleSheet(STYLESHEET)
 
-        icon_path = os.path.join(os.path.dirname(__file__), "keyword_pro.ico")
+        icon_path = resource_path("keyword_pro.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -679,10 +687,15 @@ class KeywordApp(QMainWindow):
             QMessageBox.warning(self, "경고", "엑셀로 내보낼 데이터가 없습니다.")
             return
 
+        filtered_df = self.results_df[self.results_df['분류'] != '일반']
+        if filtered_df.empty:
+            QMessageBox.information(self, "알림", "저장할 키워드가 없습니다. '일반' 분류만 존재합니다.")
+            return
+
         filename = f"keyword_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         try:
             with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
-                self.results_df.to_excel(
+                filtered_df.to_excel(
                     writer, index=False, sheet_name="KeywordAnalysis"
                 )
                 workbook, worksheet = writer.book, writer.sheets["KeywordAnalysis"]
@@ -696,19 +709,20 @@ class KeywordApp(QMainWindow):
                         "border": 1,
                     }
                 )
-                for col_num, value in enumerate(self.results_df.columns.values):
+                for col_num, value in enumerate(filtered_df.columns.values):
                     worksheet.write(0, col_num, value, header_format)
-                for idx, col in enumerate(self.results_df):
+                for idx, col in enumerate(filtered_df):
                     max_len = (
                         max(
                             (
-                                self.results_df[col].astype(str).map(len).max(),
-                                len(str(self.results_df[col].name)),
+                                filtered_df[col].astype(str).map(len).max(),
+                                len(str(filtered_df[col].name)),
                             )
                         )
                         + 2
                     )
                     worksheet.set_column(idx, idx, max_len)
+
             self.log_message("SUCCESS", f"✅ 성공! '{filename}' 파일이 저장되었습니다.")
             QMessageBox.information(
                 self, "성공", f"'{filename}' 파일이 성공적으로 저장되었습니다."
@@ -718,7 +732,6 @@ class KeywordApp(QMainWindow):
             QMessageBox.critical(
                 self, "오류", f"엑셀 파일 저장 중 오류가 발생했습니다:\n{e}"
             )
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
