@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QProgressBar,
     QMessageBox,
+    QLineEdit
 )
 from PyQt6.QtGui import QIcon, QColor
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
@@ -62,6 +63,17 @@ STYLESHEET = """
     QPushButton#CopyButton:hover { background-color: #553c9a; }
     QPushButton#ExcelButton { background-color: #fd7e14; }
     QPushButton#ExcelButton:hover { background-color: #c96a11; }
+    QPushButton#AutocompleteSearchButton { background-color: #fd7e14; }
+    QPushButton#AutocompleteSearchButton:hover { background-color: #c96a11; }
+    QPushButton#AutocompleteCopyButton { background-color: #6f42c1; }
+    QPushButton#AutocompleteCopyButton:hover { background-color: #553c9a; }
+    
+
+    QPushButton#ResetButton { background-color: #8f1313; }
+    QPushButton#ResetButton:hover { background-color: #610d0d; }
+  
+
+
     QPushButton:disabled { background-color: #adb5bd; color: #E0E0E0; }
     QTextEdit, QTableWidget { background-color: #FFFFFF; border: 1px solid #CED4DA; border-radius: 4px; padding: 5px; }
     QHeaderView::section { background-color: #E9ECEF; color: #495057; padding: 8px; border: 1px solid #DEE2E6; font-weight: bold; }
@@ -221,13 +233,18 @@ class KeywordApp(QMainWindow):
 
         main_content_layout.addWidget(
             log_container, 1
-        )  # 최종적으로 컨테이너를 메인 레이아웃에 추가
+        )
+        # 최종적으로 컨테이너를 메인 레이아웃에 추가
 
         # ❌ 문제의 원인이었던 중복 코드는 이 버전에서 삭제되었습니다.
         # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
         self.create_trend_fetch_tab()
         self.create_analysis_tab()
+
+        # ▼▼▼▼▼ [추가] 자동완성 탭 생성 함수 호출 ▼▼▼▼▼
+        self.create_autocomplete_tab()
+        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
         load_dotenv("api.env")
         if os.getenv("NAVER_ADS_API_KEY"):
@@ -243,12 +260,41 @@ class KeywordApp(QMainWindow):
         settings_frame = QWidget()
         settings_layout = QHBoxLayout(settings_frame)
         settings_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.reset_button = QPushButton("화면 초기화")
+        self.reset_button.setObjectName("ResetButton")
+        self.reset_button.clicked.connect(self.reset_ui)
+
         self.auth_button = QPushButton("인증 정보 갱신 (로그인)")
         self.auth_button.setObjectName("AuthButton")
         self.auth_button.clicked.connect(self.start_auth_regeneration)
         settings_layout.addStretch()
+        settings_layout.addWidget(self.reset_button)
         settings_layout.addWidget(self.auth_button)
         parent_layout.addWidget(settings_frame)
+
+     # ▼▼▼▼▼ [추가] UI 초기화 함수 ▼▼▼▼▼
+    def reset_ui(self):
+        """트렌드 그리드, 분석 에디터, 결과 그리드를 초기화합니다."""
+        # 트렌드 수집 탭 초기화
+        self.trend_table.setRowCount(0)
+        self.status_label_fetch.setText("버튼을 눌러 트렌드 키워드 수집을 시작하세요.")
+        self.progress_bar_fetch.setValue(0)
+        
+        # 기회지수 분석 탭 초기화
+        self.analysis_input_widget.clear()
+        self.result_table.setRowCount(0)
+        self.progress_bar_analysis.setValue(0)
+        self.export_excel_button.setDisabled(True)
+
+        # 자동완성 탭 초기화
+        self.autocomplete_input.clear()
+        self.autocomplete_table.setRowCount(0)
+    
+     
+
+        self.log_message("INFO", "모든 작업 공간이 초기화되었습니다.")
+    # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
     def create_trend_fetch_tab(self):
         tab = QWidget()
@@ -346,9 +392,60 @@ class KeywordApp(QMainWindow):
         self.analyze_button.clicked.connect(self.start_competition_analysis)
         self.export_excel_button.clicked.connect(self.export_to_excel)
 
+    def create_autocomplete_tab(self):
+        """3. 자동완성 키워드 탭 UI 생성"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 컨트롤 영역
+        control_widget = QWidget()
+        control_layout = QHBoxLayout(control_widget)
+        control_layout.setContentsMargins(0,0,0,0)
+        
+        self.autocomplete_input = QLineEdit()
+        self.autocomplete_input.setPlaceholderText("자동완성 키워드를 검색할 단어를 입력하세요...")
+        self.autocomplete_search_button = QPushButton("자동완성 검색")
+        self.autocomplete_search_button.setObjectName("AutocompleteSearchButton")
+        self.autocomplete_copy_button = QPushButton("키워드 → 분석 탭으로 복사")
+        self.autocomplete_copy_button.setObjectName("AutocompleteCopyButton")
+
+
+        control_layout.addWidget(QLabel("검색어:"), 0)
+        control_layout.addWidget(self.autocomplete_input, 1)
+        control_layout.addWidget(self.autocomplete_search_button, 0)
+        control_layout.addWidget(self.autocomplete_copy_button, 0)
+      
+
+        # 결과 테이블
+        self.autocomplete_table = QTableWidget()
+        headers = ["자동완성 키워드"]
+        self.autocomplete_table.setColumnCount(len(headers))
+        self.autocomplete_table.setHorizontalHeaderLabels(headers)
+        self.autocomplete_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        layout.addWidget(control_widget)
+        layout.addWidget(self.autocomplete_table)
+        self.tabs.addTab(tab, "자동완성 키워드 수집")
+
+        # 시그널 연결
+        self.autocomplete_search_button.clicked.connect(self.start_autocomplete_search)
+        self.autocomplete_input.returnPressed.connect(self.start_autocomplete_search)
+        self.autocomplete_copy_button.clicked.connect(self.copy_autocomplete_to_analyzer)
+      
+
+    def start_autocomplete_search(self):
+        keyword = self.autocomplete_input.text().strip()
+        if not keyword:
+            QMessageBox.warning(self, "입력 오류", "검색어를 입력해주세요.")
+            return
+        
+        self.autocomplete_search_button.setDisabled(True)
+        self.autocomplete_table.setRowCount(0)
+        self.run_worker(self.autocomplete_worker, self.on_autocomplete_finished, keyword=keyword)    
+
     def log_message(self, level, message):
         color_map = {
-            "INFO": "#ABDAEC",
+            "INFO": "#82C0FF",
             "SUCCESS": "#28A745",
             "WARNING": "orange",
             "ERROR": "#DC3545",
@@ -588,6 +685,31 @@ class KeywordApp(QMainWindow):
         finally:
             driver.quit()
 
+    def autocomplete_worker(self, worker_instance, keyword):
+        """네이버 자동완성 API를 호출하는 워커 함수"""
+        worker_instance.log.emit("INFO", f"'{keyword}' 자동완성 키워드 검색을 시작합니다...")
+        
+        base_url = "https://ac.search.naver.com/nx/ac"
+        params = {"q": keyword, "q_enc": "UTF-8", "st": "100", "r_format": "json"}
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        try:
+            resp = requests.get(base_url, params=params, headers=headers, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            results = []
+            if data.get("items") and len(data["items"]) > 0:
+                for item in data["items"][0]:
+                    results.append(item[0])
+            
+            worker_instance.log.emit("SUCCESS", f"✅ {len(results)}개의 자동완성 키워드를 찾았습니다.")
+            return results
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"네트워크 오류: {e}")
+        except json.JSONDecodeError:
+            raise Exception("JSON 파싱 오류: 서버 응답을 확인하세요.")        
+
     def on_trend_fetching_finished(self, trend_data):
         self.fetch_trends_button.setDisabled(False)
         self.progress_bar_fetch.setValue(100)
@@ -638,6 +760,14 @@ class KeywordApp(QMainWindow):
         self.analyze_button.setDisabled(False)
         self.progress_bar_analysis.setValue(100)
 
+    def on_autocomplete_finished(self, keywords):
+        self.autocomplete_table.setRowCount(len(keywords))
+        for row_idx, keyword in enumerate(keywords):
+            self.autocomplete_table.setItem(row_idx, 0, QTableWidgetItem(keyword))
+        self.autocomplete_table.resizeColumnsToContents()
+        self.autocomplete_search_button.setDisabled(False)
+        self.log_message("SUCCESS", "자동완성 키워드 수집이 완료되었습니다.")  
+
     def on_auth_finished(self, message):
         self.auth_button.setDisabled(False)
         self.log_message("SUCCESS", message)
@@ -661,6 +791,22 @@ class KeywordApp(QMainWindow):
             )
         else:
             QMessageBox.information(self, "알림", "먼저 트렌드 키워드를 가져와주세요.")
+
+    def copy_autocomplete_to_analyzer(self):
+        rows = self.autocomplete_table.rowCount()
+        if rows > 0:
+            keywords = [self.autocomplete_table.item(row, 0).text() for row in range(rows)]
+            current_text = self.analysis_input_widget.toPlainText().strip()
+            new_text = "\n".join(keywords)
+            
+            # 기존 내용에 추가
+            final_text = f"{current_text}\n{new_text}" if current_text else new_text
+            
+            self.analysis_input_widget.setPlainText(final_text.strip())
+            self.tabs.setCurrentIndex(1) # 분석 탭으로 자동 전환
+            self.log_message("INFO", f"{len(keywords)}개 키워드를 분석 탭으로 복사했습니다.")
+        else:
+            QMessageBox.information(self, "알림", "먼저 자동완성 키워드를 검색해주세요.")
 
     def update_result_table(self, df):
         self.result_table.setRowCount(len(df))
