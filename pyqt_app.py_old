@@ -11,11 +11,6 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 import xml.etree.ElementTree as ET
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service as ChromeService
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.common.by import By
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
@@ -24,6 +19,11 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QIcon, QColor
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
+
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.support.ui import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
 
 # --- PyInstaller를 위한 리소스 경로 설정 함수 ---
 def resource_path(relative_path):
@@ -46,9 +46,6 @@ STYLESHEET = """
     QPushButton#TrendButton:hover { background-color: #0056b3; }
     QPushButton#AnalyzeButton { background-color: #28a745; }
     QPushButton#AnalyzeButton:hover { background-color: #1e7e34; }
-    /* [삭제] 중단 버튼 스타일 제거
-    QPushButton#StopButton { background-color: #dc3545; }
-    QPushButton#StopButton:hover { background-color: #c82333; } */
     QPushButton#CopyButton { background-color: #6f42c1; }
     QPushButton#CopyButton:hover { background-color: #553c9a; }
     QPushButton#ExcelButton { background-color: #fd7e14; }
@@ -91,8 +88,9 @@ def get_naver_ad_keywords(keyword: str, api_key: str, secret_key: str, customer_
     signature_generator = Signature()
     base_url, uri, method = "https://api.searchad.naver.com", "/keywordstool", "GET"
     
+    header_generator = signature_generator.generate
     timestamp = str(round(time.time() * 1000))
-    signature = signature_generator.generate(timestamp, method, uri, secret_key)
+    signature = header_generator(timestamp, method, uri, secret_key)
     
     headers = {
         "Content-Type": "application/json; charset=UTF-8",
@@ -102,7 +100,6 @@ def get_naver_ad_keywords(keyword: str, api_key: str, secret_key: str, customer_
         "X-Signature": signature,
     }
     
-    # [수정] 이 함수는 이미 공백을 제거하고 있었으므로 그대로 둡니다.
     params = {"hintKeywords": keyword.replace(" ", ""), "showDetail": "1"}
     r = requests.get(base_url + uri, params=params, headers=headers, timeout=10)
     r.raise_for_status()
@@ -118,7 +115,6 @@ def get_blog_post_count(keyword: str, client_id: str, client_secret: str):
     response.raise_for_status()
     return response.json().get("total", 0)
 
-# [수정] Worker 클래스에서 중단 관련 로직 모두 제거
 class Worker(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -140,6 +136,7 @@ class Worker(QObject):
             self.error.emit(f"{e}\n{traceback.format_exc()}")
 
 class KeywordApp(QMainWindow):
+    # API URL 및 상수 정의
     NAVER_TRENDS_API_URL = "https://creator-advisor.naver.com/api/v6/trend/category"
     AC_NAVER_URL = "https://ac.search.naver.com/nx/ac?q_enc=UTF-8&st=100&r_format=json&q="
     AC_GOOGLE_URL = "https://suggestqueries.google.com/complete/search?client=firefox&output=json&q="
@@ -148,11 +145,12 @@ class KeywordApp(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("키워드 분석기 Pro v1.8")
+        self.setWindowTitle("키워드 분석기 Pro v1.7 (Robust)")
         self.setGeometry(100, 100, 1400, 800)
         self.setStyleSheet(STYLESHEET)
         
         load_dotenv("api.env")
+        # API 키들을 멤버 변수로 로드
         self.NAVER_ADS_API_KEY = os.getenv("NAVER_ADS_API_KEY")
         self.NAVER_ADS_API_SECRET = os.getenv("NAVER_ADS_API_SECRET")
         self.NAVER_ADS_CUSTOMER_ID = os.getenv("NAVER_ADS_CUSTOMER_ID")
@@ -160,7 +158,8 @@ class KeywordApp(QMainWindow):
         self.NAVER_SEARCH_CLIENT_SECRET = os.getenv("NAVER_SEARCH_CLIENT_SECRET")
 
         icon_path = resource_path("keyword_pro.ico")
-        if os.path.exists(icon_path): self.setWindowIcon(QIcon(icon_path))
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         self.thread = None
         self.worker = None
@@ -197,6 +196,7 @@ class KeywordApp(QMainWindow):
         else:
             self.log_message("WARNING", "api.env 파일을 찾을 수 없습니다. API 키를 로드해주세요.")
             
+    # --- UI 생성 메서드들 ---
     def create_settings_bar(self, parent_layout):
         settings_frame = QWidget()
         settings_layout = QHBoxLayout(settings_frame)
@@ -222,7 +222,9 @@ class KeywordApp(QMainWindow):
         self.export_excel_button.setDisabled(True)
         self.autocomplete_input.clear()
         self.autocomplete_table.setRowCount(0)
-        self.cb_naver.setChecked(True); self.cb_daum.setChecked(True); self.cb_google.setChecked(True)
+        self.cb_naver.setChecked(True)
+        self.cb_daum.setChecked(True)
+        self.cb_google.setChecked(True)
         self.log_message("INFO", "모든 작업 공간이 초기화되었습니다.")
 
     def create_trend_fetch_tab(self):
@@ -231,7 +233,7 @@ class KeywordApp(QMainWindow):
         control_widget = QWidget()
         control_layout = QHBoxLayout(control_widget)
         control_layout.setContentsMargins(0, 0, 0, 0)
-        self.fetch_trends_button = QPushButton("트렌드 가져오기")
+        self.fetch_trends_button = QPushButton("어제 날짜 트렌드 가져오기")
         self.fetch_trends_button.setObjectName("TrendButton")
         self.copy_to_analyzer_button = QPushButton("키워드 → 분석 탭으로 복사")
         self.copy_to_analyzer_button.setObjectName("CopyButton")
@@ -242,10 +244,17 @@ class KeywordApp(QMainWindow):
         status_layout = QVBoxLayout(status_container)
         status_layout.setContentsMargins(0, 0, 0, 0)
         self.status_label_fetch = QLabel("버튼을 눌러 트렌드 키워드 수집을 시작하세요.")
+        progress_container = QWidget()
+        progress_layout = QHBoxLayout(progress_container)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
         self.progress_bar_fetch = QProgressBar()
+        self.progress_bar_fetch.setFixedHeight(30)
+        self.progress_bar_fetch.setMinimumWidth(200)
+        self.progress_bar_fetch.setTextVisible(True)
         self.progress_bar_fetch.setFormat("수집 진행률: %p%")
+        progress_layout.addWidget(self.progress_bar_fetch)
         status_layout.addWidget(self.status_label_fetch)
-        status_layout.addWidget(self.progress_bar_fetch)
+        status_layout.addWidget(progress_container)
         control_layout.addWidget(status_container)
         self.trend_table = QTableWidget()
         headers = ["카테고리", "키워드", "순위변동"]
@@ -260,42 +269,36 @@ class KeywordApp(QMainWindow):
     def create_analysis_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        
-        # [수정] 주의 문구를 포함하도록 placeholder 텍스트 변경
         placeholder_text = """--- 키워드를 입력하거나 붙여넣어 주세요 (한 줄에 하나씩) ---
 
 💡 '기회 지수'란?
 '월간 총검색량 ÷ 블로그 총문서수'로 계산되는 값으로,
-문서(공급) 대비 검색량(수요)이 얼마나 높은지를 나타내는 지표입니다."""
+문서(공급) 대비 검색량(수요)이 얼마나 높은지를 나타내는 지표입니다.
+"""
         self.analysis_input_widget = QTextEdit()
         self.analysis_input_widget.setPlaceholderText(placeholder_text)
-        
-             
         control_layout = QHBoxLayout()
         self.analyze_button = QPushButton("기회지수 분석 시작")
         self.analyze_button.setObjectName("AnalyzeButton")
-        
         self.export_excel_button = QPushButton("엑셀로 저장")
         self.export_excel_button.setObjectName("ExcelButton")
         self.export_excel_button.setDisabled(True)
-        
         self.progress_bar_analysis = QProgressBar()
-        self.progress_bar_analysis.setFixedHeight(20); self.progress_bar_analysis.setTextVisible(True); self.progress_bar_analysis.setFormat("%p%")
-        
+        self.progress_bar_analysis.setFixedHeight(20)
+        self.progress_bar_analysis.setTextVisible(True)
+        self.progress_bar_analysis.setFormat("%p%")
         control_layout.addWidget(self.analyze_button)
         control_layout.addWidget(self.export_excel_button)
         control_layout.addStretch()
         control_layout.addWidget(self.progress_bar_analysis)
-        
         self.result_table = QTableWidget()
         headers = ["분류", "키워드", "총검색량", "총문서수", "기회지수"]
-        self.result_table.setColumnCount(len(headers)); self.result_table.setHorizontalHeaderLabels(headers)
-        
+        self.result_table.setColumnCount(len(headers))
+        self.result_table.setHorizontalHeaderLabels(headers)
         layout.addWidget(self.analysis_input_widget, 1)
         layout.addLayout(control_layout)
         layout.addWidget(self.result_table, 3)
         self.tabs.addTab(tab, "기회지수 분석")
-        
         self.analyze_button.clicked.connect(self.start_competition_analysis)
         self.export_excel_button.clicked.connect(self.export_to_excel)
 
@@ -307,13 +310,20 @@ class KeywordApp(QMainWindow):
         input_layout = QHBoxLayout()
         self.autocomplete_input = QLineEdit()
         self.autocomplete_input.setPlaceholderText("자동완성 키워드를 검색할 단어를 입력하세요...")
-        input_layout.addWidget(QLabel("검색어:"), 0); input_layout.addWidget(self.autocomplete_input, 1)
+        input_layout.addWidget(QLabel("검색어:"), 0)
+        input_layout.addWidget(self.autocomplete_input, 1)
         checkbox_layout = QHBoxLayout()
         checkbox_layout.setContentsMargins(10, 5, 0, 5)
         checkbox_layout.addWidget(QLabel("검색 엔진:"), 0)
-        self.cb_naver = QCheckBox("네이버"); self.cb_daum = QCheckBox("Daum"); self.cb_google = QCheckBox("Google")
-        self.cb_naver.setChecked(True); self.cb_daum.setChecked(True); self.cb_google.setChecked(True)
-        checkbox_layout.addWidget(self.cb_naver); checkbox_layout.addWidget(self.cb_daum); checkbox_layout.addWidget(self.cb_google)
+        self.cb_naver = QCheckBox("네이버")
+        self.cb_daum = QCheckBox("Daum")
+        self.cb_google = QCheckBox("Google")
+        self.cb_naver.setChecked(True)
+        self.cb_daum.setChecked(True)
+        self.cb_google.setChecked(True)
+        checkbox_layout.addWidget(self.cb_naver)
+        checkbox_layout.addWidget(self.cb_daum)
+        checkbox_layout.addWidget(self.cb_google)
         checkbox_layout.addStretch()
         button_layout = QHBoxLayout()
         self.autocomplete_search_button = QPushButton("자동완성 검색")
@@ -321,11 +331,15 @@ class KeywordApp(QMainWindow):
         self.autocomplete_copy_button = QPushButton("키워드 → 분석 탭으로 복사")
         self.autocomplete_copy_button.setObjectName("AutocompleteCopyButton")
         button_layout.addStretch()
-        button_layout.addWidget(self.autocomplete_search_button, 1); button_layout.addWidget(self.autocomplete_copy_button, 1)
-        top_control_layout.addLayout(input_layout); top_control_layout.addLayout(checkbox_layout); top_control_layout.addLayout(button_layout)
+        button_layout.addWidget(self.autocomplete_search_button, 1)
+        button_layout.addWidget(self.autocomplete_copy_button, 1)
+        top_control_layout.addLayout(input_layout)
+        top_control_layout.addLayout(checkbox_layout)
+        top_control_layout.addLayout(button_layout)
         self.autocomplete_table = QTableWidget()
         headers = ["자동완성 키워드"]
-        self.autocomplete_table.setColumnCount(len(headers)); self.autocomplete_table.setHorizontalHeaderLabels(headers)
+        self.autocomplete_table.setColumnCount(len(headers))
+        self.autocomplete_table.setHorizontalHeaderLabels(headers)
         self.autocomplete_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addLayout(top_control_layout)
         layout.addWidget(self.autocomplete_table)
@@ -334,32 +348,26 @@ class KeywordApp(QMainWindow):
         self.autocomplete_input.returnPressed.connect(self.start_autocomplete_search)
         self.autocomplete_copy_button.clicked.connect(self.copy_autocomplete_to_analyzer)
     
-    # [수정] run_worker에서 중단 버튼 관련 로직 제거
     def run_worker(self, worker_fn, finish_slot, progress_bar=None, **kwargs):
         self.thread = QThread()
         self.worker = Worker(worker_fn, **kwargs)
         self.worker.moveToThread(self.thread)
-
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(finish_slot)
         self.worker.error.connect(self.on_worker_error)
-        
         if progress_bar: self.worker.progress.connect(progress_bar.setValue)
-        
         self.worker.log.connect(self.log_message)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
-        
-        # 오류 발생 시에도 스레드 정리하도록 추가
-        self.worker.error.connect(self.thread.quit)
-        self.worker.error.connect(self.worker.deleteLater)
         self.thread.start()
 
+    # --- Worker 실행 함수들 ---
     def start_trend_fetching(self):
         self.fetch_trends_button.setDisabled(True)
         self.status_label_fetch.setText("트렌드 수집 중...")
-        self.trend_table.setRowCount(0); self.progress_bar_fetch.setValue(0)
+        self.trend_table.setRowCount(0)
+        self.progress_bar_fetch.setValue(0)
         self.run_worker(self.fetch_trends_worker, self.on_trend_fetching_finished, progress_bar=self.progress_bar_fetch)
 
     def start_competition_analysis(self):
@@ -369,19 +377,11 @@ class KeywordApp(QMainWindow):
             self.log_message("WARNING", "분석할 키워드가 입력되지 않았습니다.")
             QMessageBox.warning(self, "경고", "분석할 키워드를 입력하거나 붙여넣어 주세요.")
             return
-        
-        # [수정] 버튼 비활성화 처리 (중단 버튼 로직 제거)
         self.analyze_button.setDisabled(True)
         self.export_excel_button.setDisabled(True)
         self.result_table.setRowCount(0)
         self.progress_bar_analysis.setValue(0)
-        
-        self.run_worker(
-            self.analyze_competition_worker, 
-            self.on_analysis_finished, 
-            progress_bar=self.progress_bar_analysis, 
-            keywords=keywords
-        )
+        self.run_worker(self.analyze_competition_worker, self.on_analysis_finished, progress_bar=self.progress_bar_analysis, keywords=keywords)
 
     def start_auth_regeneration(self):
         self.auth_button.setDisabled(True)
@@ -401,99 +401,72 @@ class KeywordApp(QMainWindow):
         self.autocomplete_table.setRowCount(0)
         self.run_worker(self.autocomplete_worker, self.on_autocomplete_finished, keyword=keyword, engines=selected_engines)
 
+    # --- Worker 함수들 ---
     def fetch_trends_worker(self, worker_instance):
         worker_instance.log.emit("INFO", "📈 트렌드 키워드 수집을 시작합니다...")
         cookies = load_cookies_from_auth_file()
         if not cookies:
             raise ValueError("'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신' 버튼을 눌러주세요.")
 
-        now = datetime.now()
-        if now.hour < 9:
-            days_to_subtract = 2
-            worker_instance.log.emit("INFO", "현재 시간(오전 9시 이전) 기준으로 2일 전 트렌드를 검색합니다.")
-        else:
-            days_to_subtract = 1
-            worker_instance.log.emit("INFO", "현재 시간(오전 9시 이후) 기준으로 1일 전 트렌드를 검색합니다.")
-        
-        target_date = now - timedelta(days=days_to_subtract)
-        target_date_str = target_date.strftime("%Y-%m-%d")
-        worker_instance.log.emit("INFO", f"🎯 검색 대상 날짜: {target_date_str}")
-
+        # --- 인증 정보 유효성 검사 ---
+        worker_instance.log.emit("INFO", "인증 정보 유효성을 확인합니다...")
         try:
-            worker_instance.log.emit("INFO", "인증 정보 유효성을 확인합니다...")
             test_category = self.CATEGORIES[0]
+            target_date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
             test_api_url = f"{self.NAVER_TRENDS_API_URL}?categories={quote(test_category)}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=1&service=naver_blog"
             
             response = requests.get(test_api_url, cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"}, timeout=10)
             
             if response.status_code != 200:
-                raise ValueError(f"인증 확인 실패 (HTTP {response.status_code}). '인증 정보 갱신'이 필요할 수 있습니다.")
-
-            try:
-                data = response.json()
-            except json.JSONDecodeError:
-                raise ValueError("인증 정보가 유효하지 않습니다 (API 응답이 올바르지 않음). '인증 정보 갱신'을 해주세요.")
-
-            if "data" not in data:
-                error_message = data.get("message", "알 수 없는 API 구조")
-                raise ValueError(f"API 응답 구조가 예상과 다릅니다. 서버 응답: {error_message}")
+                try:
+                    error_data = response.json()
+                    error_message = error_data.get("message", "알 수 없는 오류")
+                    raise ValueError(f"인증이 유효하지 않습니다 (HTTP {response.status_code}). 서버 응답: {error_message}. '인증 정보 갱신'을 시도해주세요.")
+                except json.JSONDecodeError:
+                    raise ValueError(f"인증이 유효하지 않습니다 (HTTP {response.status_code}). '인증 정보 갱신'을 시도해주세요.")
+            
+            data = response.json()
+            if not data.get("data"):
+                 error_message = data.get("message", "API 응답에 데이터가 없습니다.")
+                 raise ValueError(f"인증 확인 중 API 오류가 발생했습니다. 서버 응답: {error_message}. '인증 정보 갱신'을 시도해주세요.")
 
         except requests.RequestException as e:
             raise ConnectionError(f"인증 확인 중 네트워크 오류가 발생했습니다: {e}")
         
         worker_instance.log.emit("SUCCESS", "✅ 인증 정보가 유효합니다.")
+        # --- 유효성 검사 끝 ---
         
-        all_trends_data = []
+        target_date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        
+        all_trends_data, total_categories = [], len(self.CATEGORIES)
         for i, category in enumerate(self.CATEGORIES):
             worker_instance.log.emit("INFO", f"   - '{category}' 카테고리 수집 중...")
-            worker_instance.progress.emit(int((i + 1) / len(self.CATEGORIES) * 100))
+            worker_instance.progress.emit(int((i + 1) / total_categories * 100))
             api_url = f"{self.NAVER_TRENDS_API_URL}?categories={quote(category)}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=20&service=naver_blog"
             try:
                 response = requests.get(api_url, cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"})
-                if response.status_code == 200 and (data := response.json()).get("data") and data["data"] and data["data"][0].get("queryList"):
-                    for item in data["data"][0]["queryList"]:
-                        rank_change = item.get("rankChange")
-                        try:
-                            if rank_change is not None:
-                                rank_change = int(rank_change)
-                        except (ValueError, TypeError):
-                            rank_change = None
-                        all_trends_data.append({"카테고리": category, "키워드": item.get("query", "N/A"), "순위변동": rank_change})
-                else:
-                    worker_instance.log.emit("WARNING", f"   - '{category}' 카테고리 요청 실패 (상태 코드: {response.status_code})")
+                if response.status_code == 200 and (data := response.json()).get("data") and data["data"][0].get("queryList"):
+                    for item in data["data"][0]["queryList"]: all_trends_data.append({"카테고리": category, "키워드": item["query"], "순위변동": item.get("rankChange")})
+                else: worker_instance.log.emit("WARNING", f"   - '{category}' 카테고리 요청 실패 (상태 코드: {response.status_code})")
                 time.sleep(0.3)
-            except Exception as e:
-                worker_instance.log.emit("ERROR", f"   - '{category}' 처리 중 오류: {e}")
+            except Exception as e: worker_instance.log.emit("ERROR", f"   - '{category}' 처리 중 오류: {e}")
         return all_trends_data
 
-    # [수정] 키워드 공백 제거 로직 및 관련 로직 강화
     def analyze_competition_worker(self, worker_instance, keywords):
         worker_instance.log.emit("INFO", "🔬 키워드 기회지수 분석을 시작합니다 (0.15초 간격)...")
-        unique_keywords, analysis_results, total = list(dict.fromkeys(keywords)), [], len(list(dict.fromkeys(keywords)))
-        worker_instance.log.emit("INFO", f"중복 제거 후 {total}개의 키워드를 분석합니다.")
-        
-        for i, original_keyword in enumerate(unique_keywords):
+        keywords, analysis_results, total = list(dict.fromkeys(keywords)), [], len(keywords)
+        worker_instance.log.emit("INFO", f"중복 제거 후 {len(keywords)}개의 키워드를 분석합니다.")
+        for i, keyword in enumerate(keywords):
             worker_instance.progress.emit(int((i + 1) / total * 100))
-            
-            # [추가] 공란 제거 로직. 원본 키워드는 표시용으로 유지.
-            keyword_for_api = original_keyword.replace(" ", "")
-            if not keyword_for_api: # 공란 제거 후 빈 문자열이 되면 건너뛰기
-                worker_instance.log.emit("WARNING", f"'{original_keyword}'는 공백만 있어 분석에서 제외됩니다.")
-                continue
-
-            worker_instance.log.emit("INFO", f"({i+1}/{total}) '{original_keyword}' (API 조회: '{keyword_for_api}') 분석 중...")
+            worker_instance.log.emit("INFO", f"({i+1}/{total}) '{keyword}' 분석 중...")
             try:
-                # [수정] 모든 API 호출 시 공백 없는 키워드 사용
-                ad_api_data = get_naver_ad_keywords(keyword_for_api, self.NAVER_ADS_API_KEY, self.NAVER_ADS_API_SECRET, self.NAVER_ADS_CUSTOMER_ID)
-                post_count = get_blog_post_count(keyword_for_api, self.NAVER_SEARCH_CLIENT_ID, self.NAVER_SEARCH_CLIENT_SECRET)
+                ad_api_data = get_naver_ad_keywords(keyword, self.NAVER_ADS_API_KEY, self.NAVER_ADS_API_SECRET, self.NAVER_ADS_CUSTOMER_ID)
+                post_count = get_blog_post_count(keyword, self.NAVER_SEARCH_CLIENT_ID, self.NAVER_SEARCH_CLIENT_SECRET)
 
                 pc_search, mobile_search = 0, 0
-                # [수정] API 결과에서도 공백 없는 키워드로 정확히 매칭
-                if ad_api_data and (exact_match := next((item for item in ad_api_data if item["relKeyword"] == keyword_for_api), None)):
-                    pc_count_str = str(exact_match.get("monthlyPcQcCnt", 0))
-                    mobile_count_str = str(exact_match.get("monthlyMobileQcCnt", 0))
-                    pc_search = 5 if "<" in pc_count_str else int(pc_count_str)
-                    mobile_search = 5 if "<" in mobile_count_str else int(mobile_count_str)
+                if ad_api_data and (exact_match := next((item for item in ad_api_data if item["relKeyword"] == keyword), None)):
+                    pc_count_str, mobile_count_str = str(exact_match.get("monthlyPcQcCnt", 0)), str(exact_match.get("monthlyMobileQcCnt", 0))
+                    pc_search, mobile_search = (5 if "<" in pc_count_str else int(pc_count_str)), (5 if "<" in mobile_count_str else int(mobile_count_str))
                 
                 total_search = pc_search + mobile_search
                 opportunity_index_float = (total_search / post_count) if post_count > 0 else 0
@@ -502,42 +475,25 @@ class KeywordApp(QMainWindow):
                 if opportunity_index_float >= 0.2: category = "🏆 황금"
                 elif opportunity_index_float >= 0.05 and total_search >= 1000: category = "✨ 매력"
                 
-                # [수정] 결과에는 원본 키워드를 저장하여 표시
-                analysis_results.append({"분류": category, "키워드": original_keyword, "총검색량": total_search, "총문서수": post_count, "기회지수": round(opportunity_index_float, 2)})
-            except Exception as e: worker_instance.log.emit("ERROR", f"'{original_keyword}' 분석 중 오류 발생: {e}")
+                analysis_results.append({"분류": category, "키워드": keyword, "총검색량": total_search, "총문서수": post_count, "기회지수": round(opportunity_index_float)})
+            except Exception as e: worker_instance.log.emit("ERROR", f"'{keyword}' 분석 중 오류 발생: {e}")
             time.sleep(0.15)
         return pd.DataFrame(analysis_results)
 
     def save_auth_logic(self, worker_instance):
         worker_instance.log.emit("INFO", "🔒 인증 정보 갱신을 시작합니다...")
         worker_instance.log.emit("WARNING", "새로운 크롬 창에서 네이버 로그인을 직접 진행해주세요.")
-        
-        # For stability during deployment (PyInstaller), it's recommended to
-        # include chromedriver.exe in the project folder and specify the path directly.
-        # Example: service = ChromeService(executable_path=resource_path("chromedriver.exe"))
-        
-        driver = None # Ensure driver is defined for the finally block
+        options, service = webdriver.ChromeOptions(), ChromeService(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
         try:
-            service = ChromeService(ChromeDriverManager().install())
-            options = webdriver.ChromeOptions()
-            driver = webdriver.Chrome(service=service, options=options)
-
             driver.get("https://nid.naver.com/nidlogin.login")
             worker_instance.log.emit("INFO", "로그인 페이지가 열렸습니다. 로그인이 완료될 때까지 대기합니다...")
             WebDriverWait(driver, 300).until(lambda d: "nid.naver.com" not in d.current_url)
             worker_instance.log.emit("INFO", "로그인이 감지되었습니다. 쿠키를 저장합니다...")
             storage_state = {"cookies": driver.get_cookies()}
-            with open("auth.json", "w", encoding="utf-8") as f:
-                json.dump(storage_state, f, ensure_ascii=False, indent=4)
+            with open("auth.json", "w", encoding="utf-8") as f: json.dump(storage_state, f, ensure_ascii=False, indent=4)
             return "✅ 인증 정보(auth.json)가 성공적으로 갱신되었습니다!"
-        except Exception as e:
-            import traceback
-            error_msg = f"인증 절차 중 오류 발생: {e}\n{traceback.format_exc()}"
-            worker_instance.log.emit("ERROR", error_msg)
-            raise e # Re-raise the exception to be caught by the worker's error handler
-        finally: 
-            if driver:
-                driver.quit()
+        finally: driver.quit()
 
     def _fetch_naver_autocomplete(self, worker_instance, keyword, all_results):
         try:
@@ -554,48 +510,99 @@ class KeywordApp(QMainWindow):
         except Exception as e:
             worker_instance.log.emit("ERROR", f"  - 네이버 자동완성 검색 실패: {e}")
 
+    # ▼▼▼▼▼ [수정] Daum 자동완성 로직 안정성 강화 ▼▼▼▼▼
     def _fetch_daum_autocomplete(self, worker_instance, keyword, all_results):
+        """
+        Daum 자동완성 키워드를 수집하는 더욱 안정적인 로직.
+        JSON과 XML 응답에 모두 대응하고, 예상치 못한 형식에 대비합니다.
+        """
+        resp = None  # 예외 발생 시 참조 오류를 막기 위해 미리 선언
         try:
             worker_instance.log.emit("INFO", "  - Daum 검색 중...")
             url = self.AC_DAUM_URL + quote(keyword)
             resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            resp.raise_for_status()
+
+            # 1. 빈 응답 처리
+            if not resp.content:
+                worker_instance.log.emit("WARNING", "  - Daum 응답이 비어있습니다.")
+                return
+
+            content_type = (resp.headers.get("Content-Type", "")).lower()
             content_text = resp.text
-            if "json" in resp.headers.get("Content-Type", "").lower():
-                data = json.loads(content_text)
-                if isinstance(data, list) and len(data) > 1:
-                    for item in data[1]: all_results.add(item.strip())
-                elif isinstance(data, dict) and (items := data.get("items", {}).get("s")):
-                    for item in items:
-                        if len(item) > 1: all_results.add(item[1])
-            else:
+            
+            # 2. JSON 형식 우선 시도
+            is_json = "json" in content_type
+            if is_json:
+                try:
+                    data = json.loads(content_text)
+                    # 이전에 사용됐던 두 가지 JSON 구조 모두에 대응
+                    if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list): # ["독도새우", ["독도새우 가격", ...]] 구조
+                        for item in data[1]:
+                            if isinstance(item, str): all_results.add(item.strip())
+                    elif isinstance(data, dict) and (items := data.get("items")) and (s_items := items.get("s")): # {"items": {"s": [...]}} 구조
+                         for item in s_items:
+                            if isinstance(item, list) and len(item) > 1: all_results.add(item[1])
+                    worker_instance.log.emit("SUCCESS", "  - Daum 검색 완료 (JSON).")
+                    return # JSON 처리 성공 시 종료
+                except json.JSONDecodeError:
+                     worker_instance.log.emit("WARNING", "  - JSON 파싱 실패, XML로 계속 진행...")
+
+            # 3. XML 형식으로 폴백 처리
+            try:
                 root = ET.fromstring(resp.content)
+                found = False
                 for item in root.findall('.//item/keyword'):
-                    if item.text: all_results.add(item.text.strip())
-            worker_instance.log.emit("SUCCESS", "  - Daum 검색 완료.")
+                    if item.text:
+                        all_results.add(item.text.strip())
+                        found = True
+                if found:
+                     worker_instance.log.emit("SUCCESS", "  - Daum 검색 완료 (XML).")
+                else:
+                     worker_instance.log.emit("WARNING", "  - XML 구조에서 키워드를 찾지 못했습니다.")
+            except ET.ParseError as xml_err:
+                 worker_instance.log.emit("ERROR", f"  - 최종 파싱 실패(JSON/XML): {xml_err}")
+                 # 디버깅을 위해 실제 응답 내용 일부를 로그에 남김
+                 worker_instance.log.emit("ERROR", f"  - 수신 내용(Snippet): {content_text[:200]}")
+
         except Exception as e:
-            worker_instance.log.emit("ERROR", f"  - Daum 자동완성 검색 실패: {e}")
+            error_msg = f"  - Daum 자동완성 검색 실패: {e}"
+            if resp:
+                error_msg += f" (Status: {resp.status_code})"
+            worker_instance.log.emit("ERROR", error_msg)
+    # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
     def _fetch_google_autocomplete(self, worker_instance, keyword, all_results):
         try:
             worker_instance.log.emit("INFO", "  - Google 검색 중...")
             url = self.AC_GOOGLE_URL + quote(keyword)
             resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            resp.raise_for_status()
             data = resp.json()
-            if isinstance(data, list) and len(data) > 1:
-                for item in data[1]: all_results.add(item.strip())
+            if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list):
+                for item in data[1]:
+                    if isinstance(item, str):
+                        all_results.add(item.strip())
             worker_instance.log.emit("SUCCESS", "  - Google 검색 완료.")
         except Exception as e:
             worker_instance.log.emit("ERROR", f"  - Google 자동완성 검색 실패: {e}")
 
     def autocomplete_worker(self, worker_instance, keyword, engines):
-        worker_instance.log.emit("INFO", f"'{keyword}' 자동완성 키워드 검색 시작 (대상: {', '.join(engines)})")
+        worker_instance.log.emit("INFO", f"'{keyword}' 자동완성 키워드 검색을 시작합니다. (대상: {', '.join(engines)})")
         all_results = set()
-        if 'naver' in engines: self._fetch_naver_autocomplete(worker_instance, keyword, all_results)
-        if 'daum' in engines: self._fetch_daum_autocomplete(worker_instance, keyword, all_results)
-        if 'google' in engines: self._fetch_google_autocomplete(worker_instance, keyword, all_results)
-        worker_instance.log.emit("SUCCESS", f"✅ 총 {len(all_results)}개의 키워드를 찾았습니다.")
-        return sorted(list(all_results))
+        
+        if 'naver' in engines:
+            self._fetch_naver_autocomplete(worker_instance, keyword, all_results)
+        if 'daum' in engines:
+            self._fetch_daum_autocomplete(worker_instance, keyword, all_results)
+        if 'google' in engines:
+            self._fetch_google_autocomplete(worker_instance, keyword, all_results)
+        
+        final_list = sorted(list(all_results))
+        worker_instance.log.emit("SUCCESS", f"✅ 총 {len(final_list)}개의 중복 없는 키워드를 찾았습니다.")
+        return final_list
 
+    # --- UI 업데이트 및 이벤트 핸들러 ---
     def on_trend_fetching_finished(self, trend_data):
         self.fetch_trends_button.setDisabled(False)
         self.progress_bar_fetch.setValue(100)
@@ -617,14 +624,13 @@ class KeywordApp(QMainWindow):
         self.trend_table.resizeColumnsToContents()
 
     def on_analysis_finished(self, df):
-        # [수정] 버튼 활성화 처리 (중단 버튼 로직 제거)
-        self.analyze_button.setDisabled(False)
-        if df is not None and not df.empty:
+        if not df.empty:
             self.results_df = df.sort_values(by="기회지수", ascending=False)
             self.update_result_table(self.results_df)
             self.export_excel_button.setDisabled(False)
             self.log_message("SUCCESS", "🎉 모든 키워드의 기회지수 분석이 완료되었습니다.")
         else: self.log_message("WARNING", "분석된 결과가 없습니다.")
+        self.analyze_button.setDisabled(False)
         self.progress_bar_analysis.setValue(100)
 
     def on_autocomplete_finished(self, keywords):
@@ -640,9 +646,8 @@ class KeywordApp(QMainWindow):
         QMessageBox.information(self, "성공", message)
 
     def on_worker_error(self, error_message):
-        concise_error = error_message.splitlines()[0]
-        self.log_message("ERROR", f"작업 중 오류 발생: {concise_error}")
-        QMessageBox.critical(self, "오류", f"오류가 발생했습니다:\n{concise_error}")
+        self.log_message("ERROR", f"작업 중 오류 발생: {error_message}")
+        QMessageBox.critical(self, "오류", f"오류가 발생했습니다:\n{error_message}")
         self.fetch_trends_button.setDisabled(False)
         self.analyze_button.setDisabled(False)
         self.auth_button.setDisabled(False)
@@ -660,12 +665,15 @@ class KeywordApp(QMainWindow):
         if (rows := self.autocomplete_table.rowCount()) > 0:
             keywords = [self.autocomplete_table.item(row, 0).text() for row in range(rows)]
             current_text = self.analysis_input_widget.toPlainText().strip()
+            
             new_text = "\n".join(keywords)
             final_text = f"{current_text}\n{new_text}" if current_text else new_text
+            
             self.analysis_input_widget.setPlainText(final_text.strip())
             self.tabs.setCurrentIndex(1)
             self.log_message("INFO", f"{len(keywords)}개 키워드를 분석 탭으로 복사했습니다.")
-        else: QMessageBox.information(self, "알림", "먼저 자동완성 키워드를 검색해주세요.")
+        else: 
+            QMessageBox.information(self, "알림", "먼저 자동완성 키워드를 검색해주세요.")
 
     def update_result_table(self, df):
         self.result_table.setRowCount(len(df))
