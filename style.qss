@@ -1,0 +1,33 @@
+    QWidget { background-color: #F8F9FA; color: #212529; font-family: 'Malgun Gothic'; font-size: 10pt; }
+    QMainWindow { background-color: #FFFFFF; }
+    QTabWidget::pane { border: 1px solid #DEE2E6; border-radius: 4px; }
+    QTabBar::tab { background-color: #E9ECEF; color: #495057; padding: 10px 20px; border-top-left-radius: 4px; border-top-right-radius: 4px; border: 1px solid #DEE2E6; border-bottom: none; }
+    QTabBar::tab:selected { background-color: #007BFF; color: white; font-weight: bold; }
+    QPushButton { background-color: #6C757D; color: white; border-radius: 4px; padding: 10px; border: none; font-weight: bold; }
+    QPushButton:hover { background-color: #5a6268; }
+    QPushButton#AuthButton { background-color: #17a2b8; }
+    QPushButton#AuthButton:hover { background-color: #138496; }
+    QPushButton#TrendButton { background-color: #007bff; }
+    QPushButton#TrendButton:hover { background-color: #0056b3; }
+    QPushButton#AnalyzeButton { background-color: #28a745; }
+    QPushButton#AnalyzeButton:hover { background-color: #1e7e34; }
+    /* [삭제] 중단 버튼 스타일 제거
+    QPushButton#StopButton { background-color: #dc3545; }
+    QPushButton#StopButton:hover { background-color: #c82333; } */
+    QPushButton#CopyButton { background-color: #6f42c1; }
+    QPushButton#CopyButton:hover { background-color: #553c9a; }
+    QPushButton#ExcelButton { background-color: #fd7e14; }
+    QPushButton#ExcelButton:hover { background-color: #c96a11; }
+    QPushButton#AutocompleteSearchButton { background-color: #fd7e14; }
+    QPushButton#AutocompleteSearchButton:hover { background-color: #c96a11; }
+    QPushButton#AutocompleteCopyButton { background-color: #6f42c1; }
+    QPushButton#AutocompleteCopyButton:hover { background-color: #553c9a; }
+    QPushButton#ResetButton { background-color: #8f1313; }
+    QPushButton#ResetButton:hover { background-color: #610d0d; }
+    QPushButton:disabled { background-color: #adb5bd; color: #E0E0E0; }
+    QTextEdit, QTableWidget { background-color: #FFFFFF; border: 1px solid #CED4DA; border-radius: 4px; padding: 5px; }
+    QHeaderView::section { background-color: #E9ECEF; color: #495057; padding: 8px; border: 1px solid #DEE2E6; font-weight: bold; }
+    QProgressBar { border: none; border-radius: 8px; background-color: #E9ECEF; text-align: center; color: #FFFFFF; font-weight: bold; font-size: 12pt; min-height: 30px; }
+    QProgressBar::chunk { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4DA6FF, stop:1 #007ACC); border-radius: 8px; }
+    QTextEdit#LogWindow { background-color: #252525; color: #F8F9FA; font-family: 'Consolas', 'Courier New', monospace; }
+    QCheckBox { font-weight: bold; }

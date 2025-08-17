@@ -31,52 +31,121 @@ def resource_path(relative_path):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
-# === [수정] STYLESHEET 변수 제거 및 파일 읽기 함수로 대체 ===
-
-# 스타일시트 파일을 읽어오는 함수
-def load_stylesheet():
-    try:
-        with open(resource_path("style.qss"), "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "" # 파일이 없을 경우 빈 문자열 반환
-
-# --- 스타일시트 ---
-# STYLESHEET = """
-#     QWidget { background-color: #F8F9FA; color: #212529; font-family: 'Malgun Gothic'; font-size: 10pt; }
-#     QMainWindow { background-color: #FFFFFF; }
-#     QTabWidget::pane { border: 1px solid #DEE2E6; border-radius: 4px; }
-#     QTabBar::tab { background-color: #E9ECEF; color: #495057; padding: 10px 20px; border-top-left-radius: 4px; border-top-right-radius: 4px; border: 1px solid #DEE2E6; border-bottom: none; }
-#     QTabBar::tab:selected { background-color: #007BFF; color: white; font-weight: bold; }
-#     QPushButton { background-color: #6C757D; color: white; border-radius: 4px; padding: 10px; border: none; font-weight: bold; }
-#     QPushButton:hover { background-color: #5a6268; }
-#     QPushButton#AuthButton { background-color: #17a2b8; }
-#     QPushButton#AuthButton:hover { background-color: #138496; }
-#     QPushButton#TrendButton { background-color: #007bff; }
-#     QPushButton#TrendButton:hover { background-color: #0056b3; }
-#     QPushButton#AnalyzeButton { background-color: #28a745; }
-#     QPushButton#AnalyzeButton:hover { background-color: #1e7e34; }
-#     /* [삭제] 중단 버튼 스타일 제거
-#     QPushButton#StopButton { background-color: #dc3545; }
-#     QPushButton#StopButton:hover { background-color: #c82333; } */
-#     QPushButton#CopyButton { background-color: #6f42c1; }
-#     QPushButton#CopyButton:hover { background-color: #553c9a; }
-#     QPushButton#ExcelButton { background-color: #fd7e14; }
-#     QPushButton#ExcelButton:hover { background-color: #c96a11; }
-#     QPushButton#AutocompleteSearchButton { background-color: #fd7e14; }
-#     QPushButton#AutocompleteSearchButton:hover { background-color: #c96a11; }
-#     QPushButton#AutocompleteCopyButton { background-color: #6f42c1; }
-#     QPushButton#AutocompleteCopyButton:hover { background-color: #553c9a; }
-#     QPushButton#ResetButton { background-color: #8f1313; }
-#     QPushButton#ResetButton:hover { background-color: #610d0d; }
-#     QPushButton:disabled { background-color: #adb5bd; color: #E0E0E0; }
-#     QTextEdit, QTableWidget { background-color: #FFFFFF; border: 1px solid #CED4DA; border-radius: 4px; padding: 5px; }
-#     QHeaderView::section { background-color: #E9ECEF; color: #495057; padding: 8px; border: 1px solid #DEE2E6; font-weight: bold; }
-#     QProgressBar { border: none; border-radius: 8px; background-color: #E9ECEF; text-align: center; color: #FFFFFF; font-weight: bold; font-size: 12pt; min-height: 30px; }
-#     QProgressBar::chunk { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4DA6FF, stop:1 #007ACC); border-radius: 8px; }
-#     QTextEdit#LogWindow { background-color: #252525; color: #F8F9FA; font-family: 'Consolas', 'Courier New', monospace; }
-#     QCheckBox { font-weight: bold; }
-# """
+# === [수정] OS 테마 독립적인 UI를 위한 스타일시트(QSS) 재정의 ===
+# 외부 파일 대신 코드 내에 스타일시트를 직접 정의하여 일관성을 확보합니다.
+STYLESHEET = """
+    QWidget { 
+        background-color: #F8F9FA; 
+        color: #212529; 
+        font-family: 'Malgun Gothic'; 
+        font-size: 10pt; 
+    }
+    QMainWindow { 
+        background-color: #FFFFFF; 
+    }
+    QTabWidget::pane { 
+        border: 1px solid #DEE2E6; 
+        border-radius: 4px; 
+    }
+    QTabBar::tab { 
+        background-color: #E9ECEF; 
+        color: #495057; 
+        padding: 10px 20px; 
+        border-top-left-radius: 4px; 
+        border-top-right-radius: 4px; 
+        border: 1px solid #DEE2E6; 
+        border-bottom: none; 
+    }
+    QTabBar::tab:selected { 
+        background-color: #007BFF; 
+        color: white; 
+        font-weight: bold; 
+    }
+    QPushButton { 
+        background-color: #6C757D; 
+        color: white; 
+        border-radius: 4px; 
+        padding: 10px; 
+        border: none; 
+        font-weight: bold; 
+    }
+    QPushButton:hover { 
+        background-color: #5a6268; 
+    }
+    QPushButton#AuthButton { background-color: #17a2b8; }
+    QPushButton#AuthButton:hover { background-color: #138496; }
+    QPushButton#TrendButton { background-color: #007bff; }
+    QPushButton#TrendButton:hover { background-color: #0056b3; }
+    QPushButton#AnalyzeButton { background-color: #28a745; }
+    QPushButton#AnalyzeButton:hover { background-color: #1e7e34; }
+    QPushButton#CopyButton { background-color: #6f42c1; }
+    QPushButton#CopyButton:hover { background-color: #553c9a; }
+    QPushButton#ExcelButton { background-color: #fd7e14; }
+    QPushButton#ExcelButton:hover { background-color: #c96a11; }
+    QPushButton#AutocompleteSearchButton { background-color: #fd7e14; }
+    QPushButton#AutocompleteSearchButton:hover { background-color: #c96a11; }
+    QPushButton#AutocompleteCopyButton { background-color: #6f42c1; }
+    QPushButton#AutocompleteCopyButton:hover { background-color: #553c9a; }
+    QPushButton#ResetButton { background-color: #8f1313; }
+    QPushButton#ResetButton:hover { background-color: #610d0d; }
+    QPushButton:disabled { 
+        background-color: #adb5bd; 
+        color: #E0E0E0; 
+    }
+    QTextEdit, QTableWidget, QLineEdit { /* [수정] QLineEdit 추가 */
+        background-color: #FFFFFF; 
+        border: 1px solid #CED4DA; 
+        border-radius: 4px; 
+        padding: 5px; 
+    }
+    QHeaderView::section { 
+        background-color: #E9ECEF; 
+        color: #495057; 
+        padding: 8px; 
+        border: 1px solid #DEE2E6; 
+        font-weight: bold; 
+    }
+    QProgressBar { 
+        border: none; 
+        border-radius: 8px; 
+        background-color: #E9ECEF; 
+        text-align: center; 
+        color: #FFFFFF; 
+        font-weight: bold; 
+        font-size: 12pt; 
+        min-height: 30px; 
+    }
+    QProgressBar::chunk { 
+        background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4DA6FF, stop:1 #007ACC); 
+        border-radius: 8px; 
+    }
+    QTextEdit#LogWindow { 
+        background-color: #252525; 
+        color: #F8F9FA; 
+        font-family: 'Consolas', 'Courier New', monospace; 
+    }
+    /* [수정] QCheckBox 스타일 명시적 정의 */
+    QCheckBox { 
+        font-weight: bold; 
+        spacing: 5px; /* 체크박스와 텍스트 간격 */
+    }
+    QCheckBox::indicator { /* 체크박스 모양 정의 */
+        width: 16px;
+        height: 16px;
+        border: 1px solid #CED4DA;
+        border-radius: 3px;
+        background-color: #FFFFFF;
+    }
+    QCheckBox::indicator:hover {
+        border: 1px solid #007BFF;
+    }
+    QCheckBox::indicator:checked { /* 체크되었을 때 모양 */
+        background-color: #007BFF;
+        border: 1px solid #0056b3;
+        /* 간단한 체크 표시를 위한 이미지 (Base64 인코딩) */
+        image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik05IDE2LjE3TDQuODMgMTIgMy40MSAxMy40MSA5IDE5IDIxIDcgMTkuNTkgNS41OXoiLz48L3N2Zz4=);
+    }
+"""
 
 # --- API 관련 헬퍼 클래스 및 함수 ---
 class Signature:
@@ -112,7 +181,6 @@ def get_naver_ad_keywords(keyword: str, api_key: str, secret_key: str, customer_
         "X-Signature": signature,
     }
     
-    # [수정] 이 함수는 이미 공백을 제거하고 있었으므로 그대로 둡니다.
     params = {"hintKeywords": keyword.replace(" ", ""), "showDetail": "1"}
     r = requests.get(base_url + uri, params=params, headers=headers, timeout=10)
     r.raise_for_status()
@@ -128,7 +196,6 @@ def get_blog_post_count(keyword: str, client_id: str, client_secret: str):
     response.raise_for_status()
     return response.json().get("total", 0)
 
-# [수정] Worker 클래스에서 중단 관련 로직 모두 제거
 class Worker(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -160,8 +227,7 @@ class KeywordApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("키워드 분석기 Pro v1.9")
         self.setGeometry(100, 100, 1400, 800)
-        # self.setStyleSheet(STYLESHEET)
-        self.setStyleSheet(load_stylesheet()) # 수정된 함수 호출
+        self.setStyleSheet(STYLESHEET) # [수정] 코드에 내장된 스타일시트 적용
         
         load_dotenv("api.env")
         self.NAVER_ADS_API_KEY = os.getenv("NAVER_ADS_API_KEY")
@@ -272,7 +338,6 @@ class KeywordApp(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        # [수정] 주의 문구를 포함하도록 placeholder 텍스트 변경
         placeholder_text = """--- 키워드를 입력하거나 붙여넣어 주세요 (한 줄에 하나씩) ---
 
 💡 '기회 지수'란?
@@ -345,7 +410,6 @@ class KeywordApp(QMainWindow):
         self.autocomplete_input.returnPressed.connect(self.start_autocomplete_search)
         self.autocomplete_copy_button.clicked.connect(self.copy_autocomplete_to_analyzer)
     
-    # [수정] run_worker에서 중단 버튼 관련 로직 제거
     def run_worker(self, worker_fn, finish_slot, progress_bar=None, **kwargs):
         self.thread = QThread()
         self.worker = Worker(worker_fn, **kwargs)
@@ -362,7 +426,6 @@ class KeywordApp(QMainWindow):
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
         
-        # 오류 발생 시에도 스레드 정리하도록 추가
         self.worker.error.connect(self.thread.quit)
         self.worker.error.connect(self.worker.deleteLater)
         self.thread.start()
@@ -381,7 +444,6 @@ class KeywordApp(QMainWindow):
             QMessageBox.warning(self, "경고", "분석할 키워드를 입력하거나 붙여넣어 주세요.")
             return
         
-        # [수정] 버튼 비활성화 처리 (중단 버튼 로직 제거)
         self.analyze_button.setDisabled(True)
         self.export_excel_button.setDisabled(True)
         self.result_table.setRowCount(0)
@@ -477,7 +539,6 @@ class KeywordApp(QMainWindow):
                 worker_instance.log.emit("ERROR", f"   - '{category}' 처리 중 오류: {e}")
         return all_trends_data
 
-    # [수정] 키워드 공백 제거 로직 및 관련 로직 강화
     def analyze_competition_worker(self, worker_instance, keywords):
         worker_instance.log.emit("INFO", "🔬 키워드 기회지수 분석을 시작합니다 (0.15초 간격)...")
         unique_keywords, analysis_results, total = list(dict.fromkeys(keywords)), [], len(list(dict.fromkeys(keywords)))
@@ -486,20 +547,17 @@ class KeywordApp(QMainWindow):
         for i, original_keyword in enumerate(unique_keywords):
             worker_instance.progress.emit(int((i + 1) / total * 100))
             
-            # [추가] 공란 제거 로직. 원본 키워드는 표시용으로 유지.
             keyword_for_api = original_keyword.replace(" ", "")
-            if not keyword_for_api: # 공란 제거 후 빈 문자열이 되면 건너뛰기
+            if not keyword_for_api:
                 worker_instance.log.emit("WARNING", f"'{original_keyword}'는 공백만 있어 분석에서 제외됩니다.")
                 continue
 
             worker_instance.log.emit("INFO", f"({i+1}/{total}) '{original_keyword}' (API 조회: '{keyword_for_api}') 분석 중...")
             try:
-                # [수정] 모든 API 호출 시 공백 없는 키워드 사용
                 ad_api_data = get_naver_ad_keywords(keyword_for_api, self.NAVER_ADS_API_KEY, self.NAVER_ADS_API_SECRET, self.NAVER_ADS_CUSTOMER_ID)
                 post_count = get_blog_post_count(keyword_for_api, self.NAVER_SEARCH_CLIENT_ID, self.NAVER_SEARCH_CLIENT_SECRET)
 
                 pc_search, mobile_search = 0, 0
-                # [수정] API 결과에서도 공백 없는 키워드로 정확히 매칭
                 if ad_api_data and (exact_match := next((item for item in ad_api_data if item["relKeyword"] == keyword_for_api), None)):
                     pc_count_str = str(exact_match.get("monthlyPcQcCnt", 0))
                     mobile_count_str = str(exact_match.get("monthlyMobileQcCnt", 0))
@@ -513,7 +571,6 @@ class KeywordApp(QMainWindow):
                 if opportunity_index_float >= 0.2: category = "🏆 황금"
                 elif opportunity_index_float >= 0.05 and total_search >= 1000: category = "✨ 매력"
                 
-                # [수정] 결과에는 원본 키워드를 저장하여 표시
                 analysis_results.append({"분류": category, "키워드": original_keyword, "총검색량": total_search, "총문서수": post_count, "기회지수": round(opportunity_index_float, 2)})
             except Exception as e: worker_instance.log.emit("ERROR", f"'{original_keyword}' 분석 중 오류 발생: {e}")
             time.sleep(0.15)
@@ -523,11 +580,7 @@ class KeywordApp(QMainWindow):
         worker_instance.log.emit("INFO", "🔒 인증 정보 갱신을 시작합니다...")
         worker_instance.log.emit("WARNING", "새로운 크롬 창에서 네이버 로그인을 직접 진행해주세요.")
         
-        # For stability during deployment (PyInstaller), it's recommended to
-        # include chromedriver.exe in the project folder and specify the path directly.
-        # Example: service = ChromeService(executable_path=resource_path("chromedriver.exe"))
-        
-        driver = None # Ensure driver is defined for the finally block
+        driver = None
         try:
             service = ChromeService(ChromeDriverManager().install())
             options = webdriver.ChromeOptions()
@@ -545,7 +598,7 @@ class KeywordApp(QMainWindow):
             import traceback
             error_msg = f"인증 절차 중 오류 발생: {e}\n{traceback.format_exc()}"
             worker_instance.log.emit("ERROR", error_msg)
-            raise e # Re-raise the exception to be caught by the worker's error handler
+            raise e
         finally: 
             if driver:
                 driver.quit()
@@ -628,7 +681,6 @@ class KeywordApp(QMainWindow):
         self.trend_table.resizeColumnsToContents()
 
     def on_analysis_finished(self, df):
-        # [수정] 버튼 활성화 처리 (중단 버튼 로직 제거)
         self.analyze_button.setDisabled(False)
         if df is not None and not df.empty:
             self.results_df = df.sort_values(by="기회지수", ascending=False)

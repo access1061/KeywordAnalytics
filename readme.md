@@ -1,0 +1,1 @@
+pyinstaller --noconsole --onefile --icon="keyword_pro.ico" --name="Keyword_Pro" --add-data "keyword_pro.ico;." --hidden-import "xlsxwriter" pyqt_app.py
