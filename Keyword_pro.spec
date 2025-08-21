@@ -5,7 +5,7 @@ a = Analysis(
     ['pyqt_app.py'],
     pathex=[],
     binaries=[],
-    datas=[('keyword_pro.ico', '.')],
+    datas=[('keyword_pro.ico', '.'), ('style.qss', '.')],
     hiddenimports=['xlsxwriter'],
     hookspath=[],
     hooksconfig={},
