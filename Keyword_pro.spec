@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['pyqt_app.py'],
+    ['pyqt_app_new.py'],
     pathex=[],
     binaries=[],
     datas=[('keyword_pro.ico', '.'), ('style.qss', '.')],

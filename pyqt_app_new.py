@@ -501,6 +501,22 @@ class KeywordApp(QMainWindow):
         )
 
     def start_competition_analysis(self):
+
+        # [추가] 분석 시작 전 API 키 존재 여부 확인
+        if not all(
+            [
+                self.NAVER_ADS_API_KEY,
+                self.NAVER_ADS_API_SECRET,
+                self.NAVER_ADS_CUSTOMER_ID,
+                self.NAVER_SEARCH_CLIENT_ID,
+                self.NAVER_SEARCH_CLIENT_SECRET,
+            ]
+        ):
+            error_msg = "하나 이상의 API 키가 없습니다. 'api.env' 파일을 확인해주세요."
+            self.log_message("ERROR", error_msg)
+            QMessageBox.critical(self, "API 키 오류", error_msg)
+            return  # API 키가 없으면 작업 중단
+
         keywords = self.analysis_input_widget.toPlainText().strip().split("\n")
         keywords = [kw.strip() for kw in keywords if kw.strip()]
         if not keywords:
@@ -1114,10 +1130,16 @@ class KeywordApp(QMainWindow):
         self.result_table.resizeColumnsToContents()
 
     # [추가] 트렌드 키워드 엑셀 저장 함수
+    # [수정] 트렌드 키워드 엑셀 저장 함수 (서식 강화)
+
     def export_trends_to_excel(self):
         if self.trend_table.rowCount() == 0:
             QMessageBox.warning(self, "경고", "엑셀로 내보낼 데이터가 없습니다.")
             return
+
+        # [추가] output 폴더 생성 로직
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
 
         # 현재 테이블에 보이는 데이터를 읽어옴
         data_to_export = []
@@ -1133,11 +1155,17 @@ class KeywordApp(QMainWindow):
         df = pd.DataFrame(data_to_export)
         filename = f"trend_keywords_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
+        # [수정] 파일명을 전체 경로로 변경
+        filepath = os.path.join(output_dir, filename)
+
         try:
-            with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
+            with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
                 df.to_excel(writer, index=False, sheet_name="TrendKeywords")
+
+                # [수정] 워크북과 워크시트 객체 가져오기
                 workbook = writer.book
                 worksheet = writer.sheets["TrendKeywords"]
+
                 header_format = workbook.add_format(
                     {
                         "bold": True,
@@ -1148,15 +1176,38 @@ class KeywordApp(QMainWindow):
                         "border": 1,
                     }
                 )
+
+                # [추가] 자동 줄 바꿈 서식
+                wrap_format = writer.book.add_format(
+                    {"text_wrap": True, "valign": "top", "border": 1}
+                )
+                default_format = writer.book.add_format({"valign": "top", "border": 1})
+
                 for col_num, value in enumerate(df.columns.values):
                     worksheet.write(0, col_num, value, header_format)
+
+                # [수정] 데이터 직접 작성 (줄 바꿈 서식 적용)
+                for row_idx, row in enumerate(df.itertuples(index=False), 1):
+                    # 카테고리
+                    worksheet.write(row_idx, 0, row.카테고리, default_format)
+                    # 키워드 (줄 바꿈 적용)
+                    worksheet.write(row_idx, 1, row.키워드, wrap_format)
+                    # 순위변동
+                    worksheet.write(row_idx, 2, row.순위변동, default_format)
+
+                # 열 너비 자동 맞춤
                 for idx, col in enumerate(df):
+                    series = df[col]
                     max_len = (
-                        max(df[col].astype(str).map(len).max(), len(str(df[col].name)))
+                        max((series.astype(str).map(len).max(), len(str(series.name))))
                         + 2
                     )
+                    # '키워드' 열은 너비를 좀 더 넉넉하게 설정
+                    if col == "키워드":
+                        max_len = 50
                     worksheet.set_column(idx, idx, max_len)
 
+            # [수정] 성공 메시지에 전체 경로 표시
             self.log_message("SUCCESS", f"✅ 성공! '{filename}' 파일이 저장되었습니다.")
             QMessageBox.information(
                 self, "성공", f"'{filename}' 파일이 성공적으로 저장되었습니다."
@@ -1176,32 +1227,69 @@ class KeywordApp(QMainWindow):
                 self, "알림", "저장할 키워드가 없습니다. '일반' 분류만 존재합니다."
             )
             return
+
+        # [추가] output 폴더 생성 로직
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
+
         filename = f"keyword_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        # [수정] 파일명을 전체 경로로 변경
+        filepath = os.path.join(output_dir, filename)
+
         try:
-            with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
-                filtered_df.to_excel(writer, index=False, sheet_name="KeywordAnalysis")
+            with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
+                df = filtered_df  # 편의를 위해 변수명 변경
+                df.to_excel(writer, index=False, sheet_name="KeywordAnalysis")
                 workbook, worksheet = writer.book, writer.sheets["KeywordAnalysis"]
+
+                # [수정] 워크북과 워크시트 객체 가져오기
+                workbook = writer.book
+                worksheet = writer.sheets["KeywordAnalysis"]
+
+                # [수정] 헤더 서식 정의
                 header_format = workbook.add_format(
                     {
                         "bold": True,
                         "font_color": "white",
-                        "bg_color": "#4F81BD",
+                        "bg_color": "#157C66",
                         "align": "center",
                         "valign": "vcenter",
                         "border": 1,
                     }
                 )
-                for col_num, value in enumerate(filtered_df.columns.values):
+
+                wrap_format = writer.book.add_format(
+                    {"text_wrap": True, "valign": "top", "border": 1}
+                )
+                default_format = writer.book.add_format({"valign": "top", "border": 1})
+
+                for col_num, value in enumerate(df.columns.values):
                     worksheet.write(0, col_num, value, header_format)
-                for idx, col in enumerate(filtered_df):
+
+                # [수정] 데이터 직접 작성 (줄 바꿈 서식 적용)
+                for row_idx, row in enumerate(df.itertuples(index=False), 1):
+                    col_idx = 0
+                    for value in row:
+                        # '키워드' 열에만 자동 줄 바꿈 서식 적용
+                        if df.columns[col_idx] == "키워드":
+                            worksheet.write(row_idx, col_idx, value, wrap_format)
+                        else:
+                            worksheet.write(row_idx, col_idx, value, default_format)
+                        col_idx += 1
+
+                # 열 너비 자동 맞춤
+                for idx, col in enumerate(df):
+                    series = df[col]
                     max_len = (
-                        max(
-                            filtered_df[col].astype(str).map(len).max(),
-                            len(str(filtered_df[col].name)),
-                        )
+                        max((series.astype(str).map(len).max(), len(str(series.name))))
                         + 2
                     )
+                    # '키워드' 열 너비를 50으로 고정
+                    if col == "키워드":
+                        max_len = 50
                     worksheet.set_column(idx, idx, max_len)
+
             self.log_message("SUCCESS", f"✅ 성공! '{filename}' 파일이 저장되었습니다.")
             QMessageBox.information(
                 self, "성공", f"'{filename}' 파일이 성공적으로 저장되었습니다."
