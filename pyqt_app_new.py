@@ -34,10 +34,16 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QLineEdit,
     QCheckBox,
-    QComboBox,  # [추가] 콤보박스 위젯 import
+    QComboBox,
+    QDateEdit,  # [추가] 날짜 선택 위젯
+    QRadioButton,
+    QButtonGroup,
+    QDialog,  # [수정] 월 선택 팝업을 위해 추가
+    QCalendarWidget,  # [수정] 캘린더 위젯 추가
+    QGroupBox,  # <--- 이 부분을 추가해주세요!
 )
-from PyQt6.QtGui import QIcon, QColor
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
+from PyQt6.QtGui import QIcon, QColor, QFont, QPainter, QBrush, QPen
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QPoint
 
 
 # --- PyInstaller를 위한 리소스 경로 설정 함수 ---
@@ -131,6 +137,82 @@ class Worker(QObject):
             self.error.emit(f"{e}\n{traceback.format_exc()}")
 
 
+### [수정] 주간 선택을 위한 커스텀 캘린더 위젯
+class WeeklyCalendarWidget(QCalendarWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.selected_week_start = None
+
+    def set_selected_date(self, date):
+        self.setSelectedDate(date)
+        self.update_selection(date)
+
+    def update_selection(self, date):
+        start_of_week = date.addDays(-(date.dayOfWeek() - 1))
+        self.selected_week_start = start_of_week
+        self.updateCells()
+
+    def paintCell(self, painter, rect, date):
+        super().paintCell(painter, rect, date)
+        if self.selected_week_start:
+            end_of_week = self.selected_week_start.addDays(6)
+            if self.selected_week_start <= date <= end_of_week:
+                painter.setBrush(QColor(220, 235, 255, 100))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRect(rect)
+
+
+### [수정] 월 선택을 위한 커스텀 다이얼로그
+class MonthPickerDialog(QDialog):
+    month_selected = pyqtSignal(QDate)
+
+    def __init__(self, current_date, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("월 선택")
+        self.current_year = current_date.year()
+        self.selected_month = current_date.month()
+
+        layout = QVBoxLayout(self)
+
+        # 년도 네비게이터
+        year_layout = QHBoxLayout()
+        self.prev_year_btn = QPushButton("<")
+        self.year_label = QLabel(str(self.current_year))
+        self.year_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.next_year_btn = QPushButton(">")
+        year_layout.addWidget(self.prev_year_btn)
+        year_layout.addWidget(self.year_label)
+        year_layout.addWidget(self.next_year_btn)
+        layout.addLayout(year_layout)
+
+        # 월 버튼 그리드
+        month_grid = QVBoxLayout()
+        for r in range(4):
+            row_layout = QHBoxLayout()
+            for c in range(3):
+                month = r * 3 + c + 1
+                btn = QPushButton(f"{month}월")
+                btn.clicked.connect(lambda _, m=month: self.select_month(m))
+                row_layout.addWidget(btn)
+            month_grid.addLayout(row_layout)
+        layout.addLayout(month_grid)
+
+        self.prev_year_btn.clicked.connect(self.prev_year)
+        self.next_year_btn.clicked.connect(self.next_year)
+
+    def prev_year(self):
+        self.current_year -= 1
+        self.year_label.setText(str(self.current_year))
+
+    def next_year(self):
+        self.current_year += 1
+        self.year_label.setText(str(self.current_year))
+
+    def select_month(self, month):
+        self.month_selected.emit(QDate(self.current_year, month, 1))
+        self.accept()
+
+
 class KeywordApp(QMainWindow):
     NAVER_TRENDS_API_URL = "https://creator-advisor.naver.com/api/v6/trend/category"
     AC_NAVER_URL = (
@@ -138,6 +220,10 @@ class KeywordApp(QMainWindow):
     )
     AC_GOOGLE_URL = "https://suggestqueries.google.com/complete/search?client=firefox&output=json&q="
     AC_DAUM_URL = "https://suggest.search.daum.net/sushi/opensearch/pc?q="
+
+    # ▼▼▼▼▼ [신규 추가] 블로그 기본 주소 상수 ▼▼▼▼▼
+    BLOG_BASE_URL = "https://blog.naver.com"
+
     CATEGORIES = [
         "맛집",
         "국내여행",
@@ -175,8 +261,8 @@ class KeywordApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("키워드 분석기 Pro v2.0")  # [수정] 버전 업데이트
-        self.setGeometry(100, 100, 1400, 800)
+        self.setWindowTitle("키워드 분석기 Pro v2.1")  # [수정] 버전 업데이트
+        self.setGeometry(100, 100, 1100, 800)
         self.setStyleSheet(load_stylesheet())
 
         load_dotenv("api.env")
@@ -193,49 +279,118 @@ class KeywordApp(QMainWindow):
         self.thread = None
         self.worker = None
         self.results_df = None
-        self.all_trend_data = []  # [추가] 전체 트렌드 데이터를 저장할 변수
-
-        # [추가] 순위변동 컬럼의 정렬 순서를 저장하는 변수 (내림차순으로 시작)
+        self.blog_views_df = None  # [추가] 블로그 조회수 DF 변수
+        self.all_trend_data = []
         self.rank_sort_order = Qt.SortOrder.DescendingOrder
-
-        # [추가] 현재 테이블에 표시되는 데이터를 저장할 변수
         self.currently_displayed_data = []
+
+        ### [수정] 블로그 탭의 날짜 상태 관리를 위한 변수 추가
+        self.bv_current_date = QDate.currentDate()
+        self.bv_calendar_popup = None
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         top_level_layout = QVBoxLayout(central_widget)
+        top_level_layout.setContentsMargins(5, 5, 5, 5)  # 전체 여백 최소화
 
+        # 설정 바 생성
         self.create_settings_bar(top_level_layout)
-        main_content_layout = QHBoxLayout()
-        top_level_layout.addLayout(main_content_layout)
 
+        # 탭 위젯 생성 및 추가
         self.tabs = QTabWidget()
-        main_content_layout.addWidget(self.tabs, 2)
+        top_level_layout.addWidget(self.tabs)
 
-        log_container = QWidget()
-        log_layout = QVBoxLayout(log_container)
-        log_label = QLabel("실시간 로그")
-        log_label.setStyleSheet("font-weight: bold; font-size: 12pt; padding: 5px;")
-        self.log_widget = QTextEdit()
-        self.log_widget.setReadOnly(True)
-        self.log_widget.setObjectName("LogWindow")
-        log_layout.addWidget(log_label)
-        log_layout.addWidget(self.log_widget)
-        main_content_layout.addWidget(log_container, 1)
-
+        # 탭들 생성
         self.create_trend_fetch_tab()
         self.create_analysis_tab()
         self.create_autocomplete_tab()
         self.create_naver_main_tab()
+        self.create_blog_views_tab()
 
-        if self.NAVER_ADS_API_KEY:
-            self.log_message(
-                "INFO", "프로그램이 시작되었습니다. API 키를 로드했습니다."
-            )
-        else:
-            self.log_message(
-                "WARNING", "api.env 파일을 찾을 수 없습니다. API 키를 로드해주세요."
-            )
+        # 로그 영역을 하단에 배치하고 여백 최소화
+        # log_container = QWidget()
+        # log_layout = QHBoxLayout(log_container)
+        # log_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
+        # log_layout.setSpacing(2)  # 위젯 간 간격 최소화
+
+        # # 로그 라벨 스타일 수정
+        # log_label = QLabel("실시간 로그")
+        # log_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        # log_label.setFixedWidth(80)  # 라벨 너비 축소
+
+        # # 로그 위젯 설정 수정
+        # self.log_widget = QTextEdit()
+        # self.log_widget.setReadOnly(True)
+        # self.log_widget.setObjectName("LogWindow")
+        # self.log_widget.setFixedHeight(80)  # 높이 축소
+
+        # # 로그 레이아웃에 위젯 추가
+        # log_layout.addWidget(log_label)
+        # log_layout.addWidget(self.log_widget)
+
+        # # 메인 레이아웃에 로그 컨테이너 추가
+        # top_level_layout.addWidget(log_container)
+
+        # ... (상단 코드 생략) ...
+
+        # --- ▼▼▼ [수정] 실시간 로그 UI 개선 ▼▼▼ ---
+        # QGroupBox를 사용하여 로그 섹션을 시각적으로 그룹화하고 제목을 추가합니다.
+        log_group_box = QGroupBox("📜 실시간 로그")
+        log_group_box.setStyleSheet(
+            """
+            QGroupBox {
+                font-size: 9pt;
+                font-weight: light;
+                border: 1px solid #D0D0D0;
+                border-radius: 5px;
+                margin-top: 12px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px 0 5px;
+                left: 10px;
+            }
+        """
+        )
+
+        # 그룹 박스 내부는 QVBoxLayout을 사용하여 로그창만 배치합니다.
+        log_layout = QVBoxLayout(log_group_box)
+        log_layout.setContentsMargins(8, 8, 8, 8)  # 내부 여백 설정
+
+        self.log_widget = QTextEdit()
+        self.log_widget.setReadOnly(True)
+        self.log_widget.setObjectName("LogWindow")
+        self.log_widget.setMinimumHeight(
+            100
+        )  # 고정 높이 대신 최소 높이로 설정하여 유연성 확보
+        self.log_widget.setStyleSheet(
+            """
+            QTextEdit#LogWindow {
+                background-color: #2E2E2E; /* 부드러운 검은색 */
+                color: #F0F0F0; /* 밝은 회색 텍스트 */
+                border: 1px solid #4A4A4A;
+                border-radius: 4px;
+                padding: 5px; /* 내부 텍스트 여백 */
+                font-family: "Malgun Gothic", sans-serif; /* 폰트 지정 */
+            }
+        """
+        )
+
+        # 레이아웃에 로그 위젯 추가
+        log_layout.addWidget(self.log_widget)
+
+        # 메인 레이아웃에 그룹 박스를 추가합니다.
+        top_level_layout.addWidget(log_group_box)
+        # --- ▲▲▲ [수정] 실시간 로그 UI 개선 완료 ▲▲▲ ---
+
+    # ... (하단 코드 생략) ...
+
+    # ...existing code...
+
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ UI 생성 메서드들 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
 
     def create_settings_bar(self, parent_layout):
         settings_frame = QWidget()
@@ -252,35 +407,6 @@ class KeywordApp(QMainWindow):
         settings_layout.addWidget(self.auth_button)
         parent_layout.addWidget(settings_frame)
 
-    def reset_ui(self):
-        # [수정] 트렌드 탭의 신규 위젯들 초기화 로직 추가
-        self.trend_table.setRowCount(0)
-        self.all_trend_data = []
-        self.category_filter_combo.clear()
-        self.category_filter_combo.setDisabled(True)
-        self.export_trends_excel_button.setDisabled(True)
-        self.copy_to_analyzer_button.setDisabled(True)
-
-        # [추가] 정렬 상태 및 헤더 표시 초기화
-        self.rank_sort_order = Qt.SortOrder.DescendingOrder
-        self.trend_table.horizontalHeader().setSortIndicator(
-            -1, Qt.SortOrder.AscendingOrder
-        )
-        self.trend_table.horizontalHeader().setSortIndicatorShown(False)
-
-        self.status_label_fetch.setText("버튼을 눌러 트렌드 키워드 수집을 시작하세요.")
-        self.progress_bar_fetch.setValue(0)
-        self.analysis_input_widget.clear()
-        self.result_table.setRowCount(0)
-        self.progress_bar_analysis.setValue(0)
-        self.export_excel_button.setDisabled(True)
-        self.autocomplete_input.clear()
-        self.autocomplete_table.setRowCount(0)
-        self.cb_naver.setChecked(True)
-        self.cb_daum.setChecked(True)
-        self.cb_google.setChecked(True)
-        self.log_message("INFO", "모든 작업 공간이 초기화되었습니다.")
-
     def create_trend_fetch_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -293,38 +419,28 @@ class KeywordApp(QMainWindow):
         self.copy_to_analyzer_button = QPushButton("키워드 → 분석 탭으로 복사")
         self.copy_to_analyzer_button.setObjectName("CopyButton")
 
-        # [추가] 카테고리 필터 콤보박스와 엑셀 저장 버튼 생성
         self.category_filter_combo = QComboBox()
         self.category_filter_combo.setFixedWidth(150)
         self.export_trends_excel_button = QPushButton("엑셀로 저장")
-        self.export_trends_excel_button.setObjectName(
-            "ExcelButton"
-        )  # 다른 엑셀 버튼과 스타일 공유
+        self.export_trends_excel_button.setObjectName("ExcelButton")
 
-        # [추가] 초기에는 비활성화 상태로 둠
         self.copy_to_analyzer_button.setDisabled(True)
         self.category_filter_combo.setDisabled(True)
         self.export_trends_excel_button.setDisabled(True)
 
         control_layout.addWidget(self.fetch_trends_button)
         control_layout.addWidget(self.copy_to_analyzer_button)
-        # [추가] 새로 만든 위젯들을 레이아웃에 추가
         control_layout.addWidget(QLabel("카테고리 필터:"))
         control_layout.addWidget(self.category_filter_combo)
         control_layout.addWidget(self.export_trends_excel_button)
-
         control_layout.addStretch()
 
-        # 수정 후 코드 (일부)
         status_container = QWidget()
-        status_container.setMinimumWidth(
-            350
-        )  # [추가] 상태 표시 영역의 최소 너비를 350px로 고정
+        status_container.setMinimumWidth(350)
         status_layout = QVBoxLayout(status_container)
         status_layout.setContentsMargins(0, 0, 0, 0)
         self.status_label_fetch = QLabel("버튼을 눌러 트렌드 키워드 수집을 시작하세요.")
         self.progress_bar_fetch = QProgressBar()
-
         self.progress_bar_fetch.setFormat("수집 진행률: %p%")
         status_layout.addWidget(self.status_label_fetch)
         status_layout.addWidget(self.progress_bar_fetch)
@@ -334,8 +450,6 @@ class KeywordApp(QMainWindow):
         headers = ["카테고리", "키워드", "순위변동"]
         self.trend_table.setColumnCount(len(headers))
         self.trend_table.setHorizontalHeaderLabels(headers)
-
-        # [수정] 기본 정렬은 비활성화하고, 헤더 클릭 시그널을 직접 연결
         self.trend_table.setSortingEnabled(False)
         self.trend_table.horizontalHeader().sectionClicked.connect(
             self.sort_trend_table_by_rank_change
@@ -345,7 +459,6 @@ class KeywordApp(QMainWindow):
         layout.addWidget(self.trend_table)
         self.tabs.addTab(tab, "트렌드 키워드 수집")
 
-        # [수정] 시그널 연결
         self.fetch_trends_button.clicked.connect(self.start_trend_fetching)
         self.copy_to_analyzer_button.clicked.connect(self.copy_trends_to_analyzer)
         self.category_filter_combo.currentIndexChanged.connect(self.filter_trend_table)
@@ -416,9 +529,11 @@ class KeywordApp(QMainWindow):
         self.autocomplete_search_button.setObjectName("AutocompleteSearchButton")
         self.autocomplete_copy_button = QPushButton("키워드 → 분석 탭으로 복사")
         self.autocomplete_copy_button.setObjectName("AutocompleteCopyButton")
+
+        button_layout.addWidget(self.autocomplete_search_button)
+        button_layout.addWidget(self.autocomplete_copy_button)
+
         button_layout.addStretch()
-        button_layout.addWidget(self.autocomplete_search_button, 1)
-        button_layout.addWidget(self.autocomplete_copy_button, 1)
         top_control_layout.addLayout(input_layout)
         top_control_layout.addLayout(checkbox_layout)
         top_control_layout.addLayout(button_layout)
@@ -467,6 +582,224 @@ class KeywordApp(QMainWindow):
         self.fetch_main_content_button.clicked.connect(self.start_fetch_naver_main)
         self.naver_main_table.cellDoubleClicked.connect(self.open_browser_link)
 
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼ [신규 추가] 블로그 조회수 탭 UI ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
+    def create_blog_views_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 1. 상단 컨트롤 UI (날짜 선택)
+        top_control_layout = QHBoxLayout()
+        top_control_layout.setContentsMargins(0, 0, 0, 10)  # 하단 여백 추가
+
+        # 날짜 네비게이터
+        self.bv_prev_btn = QPushButton("<")
+        self.bv_date_label = QLabel("")
+        self.bv_date_label.setFont(QFont("Arial", 10))
+        self.bv_calendar_btn = QPushButton("📅")  # 아이콘 대신 텍스트
+        self.bv_next_btn = QPushButton(">")
+
+        # 버튼 크기 고정
+        self.bv_prev_btn.setFixedSize(30, 30)
+        self.bv_next_btn.setFixedSize(30, 30)
+        self.bv_calendar_btn.setFixedSize(30, 30)
+
+        # 버튼 그룹 (모드 변경용)
+        self.bv_mode_group = QButtonGroup(self)
+        self.bv_radio_daily = QPushButton("일간")
+        self.bv_radio_weekly = QPushButton("주간")
+        self.bv_radio_monthly = QPushButton("월간")
+
+        self.bv_radio_daily.setCheckable(True)
+        self.bv_radio_weekly.setCheckable(True)
+        self.bv_radio_monthly.setCheckable(True)
+
+        self.bv_mode_group.addButton(self.bv_radio_daily, 0)
+        self.bv_mode_group.addButton(self.bv_radio_weekly, 1)
+        self.bv_mode_group.addButton(self.bv_radio_monthly, 2)
+
+        top_control_layout.addWidget(self.bv_prev_btn)
+        top_control_layout.addWidget(self.bv_date_label)
+        top_control_layout.addWidget(self.bv_calendar_btn)
+        top_control_layout.addWidget(self.bv_next_btn)
+        top_control_layout.addStretch(1)
+        top_control_layout.addWidget(self.bv_radio_daily)
+        top_control_layout.addWidget(self.bv_radio_weekly)
+        top_control_layout.addWidget(self.bv_radio_monthly)
+
+        # 3. 하단 컨트롤 UI (버튼, 상태 표시)
+        bottom_control_layout = QHBoxLayout()
+        bottom_control_layout.setContentsMargins(0, 5, 0, 0)  # 상단 여백 추가
+        self.fetch_blog_views_button = QPushButton("조회수 순위 가져오기")
+        self.fetch_blog_views_button.setObjectName("TrendButton")
+        self.export_blog_views_button = QPushButton("엑셀로 저장")
+        self.export_blog_views_button.setObjectName("ExcelButton")
+        self.export_blog_views_button.setDisabled(True)
+
+        bottom_control_layout.addWidget(self.fetch_blog_views_button)
+        bottom_control_layout.addWidget(self.export_blog_views_button)
+        bottom_control_layout.addStretch()
+
+        # 2. 결과 테이블
+        self.blog_views_table = QTableWidget()
+        headers = ["날짜", "순위", "조회수", "제목"]
+        self.blog_views_table.setColumnCount(len(headers))
+        self.blog_views_table.setHorizontalHeaderLabels(headers)
+
+        # 상태 표시 UI (이전과 동일)
+        status_container = QWidget()
+        status_container.setMinimumWidth(350)
+        status_layout = QVBoxLayout(status_container)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        self.status_label_bv = QLabel("조회할 기간을 선택하고 버튼을 눌러주세요.")
+        self.progress_bar_bv = QProgressBar()
+        self.progress_bar_bv.setFormat("진행률: %p%")
+        status_layout.addWidget(self.status_label_bv)
+        status_layout.addWidget(self.progress_bar_bv)
+        bottom_control_layout.addWidget(status_container)
+
+        # 4. 레이아웃에 위젯 추가 및 탭 생성
+        layout.addLayout(top_control_layout)  # 상단 컨트롤 레이아웃 추가
+        layout.addLayout(bottom_control_layout)  # 하단 컨트롤 레이아웃 추가
+        layout.addWidget(self.blog_views_table)  # 결과 테이블 추가
+        self.tabs.addTab(tab, "블로그 조회수 순위")
+
+        # 5. 시그널 연결
+        self.bv_mode_group.buttonClicked.connect(self.bv_on_mode_changed)
+        self.bv_prev_btn.clicked.connect(self.bv_navigate_prev)
+        self.bv_next_btn.clicked.connect(self.bv_navigate_next)
+        self.bv_calendar_btn.clicked.connect(self.bv_show_calendar_picker)
+        self.fetch_blog_views_button.clicked.connect(self.start_fetch_blog_views)
+        self.export_blog_views_button.clicked.connect(self.export_blog_views_to_excel)
+        self.blog_views_table.cellDoubleClicked.connect(self.open_blog_view_link)
+
+        # 6. 초기 상태 설정
+        self.bv_radio_daily.setChecked(True)
+        self.bv_on_mode_changed()
+
+    ### [수정] 블로그 탭 관련 헬퍼 메서드들
+    def bv_on_mode_changed(self):
+        checked_id = self.bv_mode_group.checkedId()
+        today = QDate.currentDate()
+
+        # 기본 날짜 설정
+        if checked_id == 0:  # 일간
+            self.bv_current_date = today
+        elif checked_id == 1:  # 주간
+            self.bv_current_date = today.addDays(-7)
+        elif checked_id == 2:  # 월간
+            self.bv_current_date = today.addMonths(-1)
+
+        self.bv_update_date_display()
+
+    def bv_update_date_display(self):
+        checked_id = self.bv_mode_group.checkedId()
+        date = self.bv_current_date
+
+        if checked_id == 0:  # 일간
+            self.bv_date_label.setText(date.toString("yyyy.MM.dd."))
+        elif checked_id == 1:  # 주간
+            start_of_week = date.addDays(-(date.dayOfWeek() - 1))
+            end_of_week = start_of_week.addDays(6)
+            self.bv_date_label.setText(
+                f"{start_of_week.toString('yyyy.MM.dd.')} ~ {end_of_week.toString('yyyy.MM.dd.')}"
+            )
+        elif checked_id == 2:  # 월간
+            self.bv_date_label.setText(date.toString("yyyy.MM."))
+
+    def bv_navigate_prev(self):
+        checked_id = self.bv_mode_group.checkedId()
+        if checked_id == 0:
+            self.bv_current_date = self.bv_current_date.addDays(-1)
+        elif checked_id == 1:
+            self.bv_current_date = self.bv_current_date.addDays(-7)
+        elif checked_id == 2:
+            self.bv_current_date = self.bv_current_date.addMonths(-1)
+        self.bv_update_date_display()
+
+    def bv_navigate_next(self):
+        checked_id = self.bv_mode_group.checkedId()
+        if checked_id == 0:
+            self.bv_current_date = self.bv_current_date.addDays(1)
+        elif checked_id == 1:
+            self.bv_current_date = self.bv_current_date.addDays(7)
+        elif checked_id == 2:
+            self.bv_current_date = self.bv_current_date.addMonths(1)
+        self.bv_update_date_display()
+
+    def bv_show_calendar_picker(self):
+        checked_id = self.bv_mode_group.checkedId()
+
+        if checked_id == 2:  # 월간
+            dialog = MonthPickerDialog(self.bv_current_date, self)
+            dialog.month_selected.connect(self.bv_on_date_selected)
+            dialog.exec()
+            return
+
+        # 일간 및 주간 공통 캘린더
+        if self.bv_calendar_popup is None:
+            self.bv_calendar_popup = WeeklyCalendarWidget()
+            self.bv_calendar_popup.setWindowFlags(Qt.WindowType.Popup)
+            self.bv_calendar_popup.clicked.connect(self.bv_on_date_selected)
+
+        self.bv_calendar_popup.set_selected_date(self.bv_current_date)
+
+        # 팝업 위치 계산
+        global_pos = self.bv_calendar_btn.mapToGlobal(
+            QPoint(0, self.bv_calendar_btn.height())
+        )
+        self.bv_calendar_popup.move(global_pos)
+        self.bv_calendar_popup.show()
+
+    def bv_on_date_selected(self, date):
+        self.bv_current_date = date
+        self.bv_update_date_display()
+        if self.bv_calendar_popup and self.bv_calendar_popup.isVisible():
+            self.bv_calendar_popup.hide()
+
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ Worker 실행 및 관리 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
+
+    def reset_ui(self):
+        # 트렌드 탭
+        self.trend_table.setRowCount(0)
+        self.all_trend_data = []
+        self.category_filter_combo.clear()
+        self.category_filter_combo.setDisabled(True)
+        self.export_trends_excel_button.setDisabled(True)
+        self.copy_to_analyzer_button.setDisabled(True)
+        self.rank_sort_order = Qt.SortOrder.DescendingOrder
+        self.trend_table.horizontalHeader().setSortIndicator(
+            -1, Qt.SortOrder.AscendingOrder
+        )
+        self.trend_table.horizontalHeader().setSortIndicatorShown(False)
+        self.status_label_fetch.setText("버튼을 눌러 트렌드 키워드 수집을 시작하세요.")
+        self.progress_bar_fetch.setValue(0)
+
+        # 분석 탭
+        self.analysis_input_widget.clear()
+        self.result_table.setRowCount(0)
+        self.progress_bar_analysis.setValue(0)
+        self.export_excel_button.setDisabled(True)
+
+        # 자동완성 탭
+        self.autocomplete_input.clear()
+        self.autocomplete_table.setRowCount(0)
+        self.cb_naver.setChecked(True)
+        self.cb_daum.setChecked(True)
+        self.cb_google.setChecked(True)
+
+        # [수정] 블로그 조회수 탭 초기화
+        self.bv_on_mode_changed()
+        self.blog_views_table.setRowCount(0)
+        self.status_label_bv.setText("조회할 기간을 선택하고 버튼을 눌러주세요.")
+        self.progress_bar_bv.setValue(0)
+        self.export_blog_views_button.setDisabled(True)
+
+        self.log_message("INFO", "모든 작업 공간이 초기화되었습니다.")
+
     def run_worker(self, worker_fn, finish_slot, progress_bar=None, **kwargs):
         self.thread = QThread()
         self.worker = Worker(worker_fn, **kwargs)
@@ -486,11 +819,9 @@ class KeywordApp(QMainWindow):
 
     def start_trend_fetching(self):
         self.fetch_trends_button.setDisabled(True)
-        # [추가] 필터, 복사, 저장 버튼도 비활성화
         self.category_filter_combo.setDisabled(True)
         self.copy_to_analyzer_button.setDisabled(True)
         self.export_trends_excel_button.setDisabled(True)
-
         self.status_label_fetch.setText("트렌드 수집 중...")
         self.trend_table.setRowCount(0)
         self.progress_bar_fetch.setValue(0)
@@ -501,8 +832,6 @@ class KeywordApp(QMainWindow):
         )
 
     def start_competition_analysis(self):
-
-        # [추가] 분석 시작 전 API 키 존재 여부 확인
         if not all(
             [
                 self.NAVER_ADS_API_KEY,
@@ -515,12 +844,10 @@ class KeywordApp(QMainWindow):
             error_msg = "하나 이상의 API 키가 없습니다. 'api.env' 파일을 확인해주세요."
             self.log_message("ERROR", error_msg)
             QMessageBox.critical(self, "API 키 오류", error_msg)
-            return  # API 키가 없으면 작업 중단
-
+            return
         keywords = self.analysis_input_widget.toPlainText().strip().split("\n")
         keywords = [kw.strip() for kw in keywords if kw.strip()]
         if not keywords:
-            self.log_message("WARNING", "분석할 키워드가 입력되지 않았습니다.")
             QMessageBox.warning(
                 self, "경고", "분석할 키워드를 입력하거나 붙여넣어 주세요."
             )
@@ -575,6 +902,47 @@ class KeywordApp(QMainWindow):
         self.naver_main_table.setRowCount(0)
         self.run_worker(self.fetch_naver_main_worker, self.on_naver_main_finished)
 
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼ [신규 추가] 블로그 조회수 워커 실행 함수 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # -------------------------------------------------------------------
+    def start_fetch_blog_views(self):
+        checked_id = self.bv_mode_group.checkedId()
+        time_dim_map = {0: "DATE", 1: "WEEK", 2: "MONTH"}
+        time_dimension = time_dim_map[checked_id]
+
+        # 날짜 계산 로직 수정
+        date = self.bv_current_date
+        if checked_id == 0:  # 일간
+            start_date = end_date = date.toPyDate()
+        elif checked_id == 1:  # 주간
+            start_of_week = date.addDays(-(date.dayOfWeek() - 1))
+            start_date = start_of_week.toPyDate()
+            end_date = start_of_week.addDays(6).toPyDate()
+        elif checked_id == 2:  # 월간
+            start_date = QDate(date.year(), date.month(), 1).toPyDate()
+            end_date = QDate(date.year(), date.month(), date.daysInMonth()).toPyDate()
+
+        self.fetch_blog_views_button.setDisabled(True)
+        self.export_blog_views_button.setDisabled(True)
+        self.status_label_bv.setText(
+            f"블로그 {self.bv_mode_group.checkedButton().text()} 순위 수집 중..."
+        )
+        self.blog_views_table.setRowCount(0)
+        self.progress_bar_bv.setValue(0)
+
+        self.run_worker(
+            self.fetch_blog_views_worker,
+            self.on_fetch_blog_views_finished,
+            progress_bar=self.progress_bar_bv,
+            start_date=start_date,
+            end_date=end_date,
+            time_dimension=time_dimension,
+        )
+
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 백그라운드 Worker 로직들 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
+
     def fetch_trends_worker(self, worker_instance):
         worker_instance.log.emit("INFO", "📈 트렌드 키워드 수집을 시작합니다...")
         cookies = load_cookies_from_auth_file()
@@ -583,14 +951,12 @@ class KeywordApp(QMainWindow):
                 "'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신' 버튼을 눌러주세요."
             )
         now = datetime.now()
-        days_to_subtract = 2 if now.hour < 9 else 1
-        log_msg = f"현재 시간(오전 9시 {'이전' if days_to_subtract == 2 else '이후'}) 기준으로 {days_to_subtract}일 전 트렌드를 검색합니다."
-        worker_instance.log.emit("INFO", log_msg)
+        # 8시기준 8시 이전이라면 전전날자로 8시 이후라면 전날자로 설정
+        days_to_subtract = 2 if now.hour < 8 else 1
         target_date = now - timedelta(days=days_to_subtract)
         target_date_str = target_date.strftime("%Y-%m-%d")
         worker_instance.log.emit("INFO", f"🎯 검색 대상 날짜: {target_date_str}")
         try:
-            worker_instance.log.emit("INFO", "인증 정보 유효성을 확인합니다...")
             test_category = self.CATEGORIES[0]
             test_api_url = f"{self.NAVER_TRENDS_API_URL}?categories={quote(test_category)}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=1&service=naver_blog"
             response = requests.get(
@@ -603,19 +969,18 @@ class KeywordApp(QMainWindow):
                 raise ValueError(
                     f"인증 확인 실패 (HTTP {response.status_code}). '인증 정보 갱신'이 필요할 수 있습니다."
                 )
-            try:
-                data = response.json()
-            except json.JSONDecodeError:
-                raise ValueError(
-                    "인증 정보가 유효하지 않습니다 (API 응답이 올바르지 않음). '인증 정보 갱신'을 해주세요."
-                )
+            data = response.json()
             if "data" not in data:
-                error_message = data.get("message", "알 수 없는 API 구조")
                 raise ValueError(
-                    f"API 응답 구조가 예상과 다릅니다. 서버 응답: {error_message}"
+                    f"API 응답 구조가 예상과 다릅니다. 서버 응답: {data.get('message', '알 수 없음')}"
                 )
         except requests.RequestException as e:
             raise ConnectionError(f"인증 확인 중 네트워크 오류가 발생했습니다: {e}")
+        except json.JSONDecodeError:
+            raise ValueError(
+                "인증 정보가 유효하지 않습니다 (API 응답 오류). '인증 정보 갱신'을 해주세요."
+            )
+
         worker_instance.log.emit("SUCCESS", "✅ 인증 정보가 유효합니다.")
         all_trends_data = []
         for i, category in enumerate(self.CATEGORIES):
@@ -706,8 +1071,9 @@ class KeywordApp(QMainWindow):
                         None,
                     )
                 ):
-                    pc_count_str = str(exact_match.get("monthlyPcQcCnt", 0))
-                    mobile_count_str = str(exact_match.get("monthlyMobileQcCnt", 0))
+                    pc_count_str, mobile_count_str = str(
+                        exact_match.get("monthlyPcQcCnt", 0)
+                    ), str(exact_match.get("monthlyMobileQcCnt", 0))
                     pc_search = 5 if "<" in pc_count_str else int(pc_count_str)
                     mobile_search = (
                         5 if "<" in mobile_count_str else int(mobile_count_str)
@@ -744,12 +1110,11 @@ class KeywordApp(QMainWindow):
             raise ValueError(
                 "'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신'을 먼저 실행해주세요."
             )
-        yesterday = datetime.now() - timedelta(days=1)
-        yesterday_str = yesterday.strftime("%Y-%m-%d")
-        base_url = "https://creator-advisor.naver.com"
-        api_path = "/api/v6/trend/main-inflow-content-ranks"
+        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        api_url = (
+            "https://creator-advisor.naver.com/api/v6/trend/main-inflow-content-ranks"
+        )
         params = {"service": "naver_blog", "date": yesterday_str, "interval": "day"}
-        api_url = f"{base_url}{api_path}"
         results = []
         try:
             response = requests.get(
@@ -778,16 +1143,111 @@ class KeywordApp(QMainWindow):
                 raise ValueError(
                     "인증 확인 실패 (HTTP 401). '인증 정보 갱신'이 필요할 수 있습니다."
                 )
-            else:
-                worker_instance.log.emit(
-                    "ERROR", f"네이버 메인 콘텐츠 API 호출 중 HTTP 오류: {e}"
-                )
-                raise e
+            raise e
         except Exception as e:
             worker_instance.log.emit(
                 "ERROR", f"네이버 메인 콘텐츠 API 호출 중 오류: {e}"
             )
             raise e
+
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼ [신규 추가] 블로그 조회수 워커 ▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
+    # 1. 데이터를 만드는 워커 함수
+    def fetch_blog_views_worker(
+        self, worker_instance, start_date, end_date, time_dimension
+    ):
+        worker_instance.log.emit(
+            "INFO", f"📈 블로그 {time_dimension} 순위 수집을 시작합니다..."
+        )
+        cookies = load_cookies_from_auth_file()
+        if not cookies:
+            raise ValueError(
+                "'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신'을 먼저 실행해주세요."
+            )
+
+        all_view_data = []
+
+        # [수정] 조회 단위에 따라 반복 로직 변경
+        dates_to_fetch = []
+        if time_dimension in ["DATE", "WEEK"]:
+            total_days = (end_date - start_date).days
+            step = 7 if time_dimension == "WEEK" else 1
+            for i in range(0, total_days + 1, step):
+                dates_to_fetch.append(start_date + timedelta(days=i))
+        else:  # MONTH, YEAR
+            # 월간, 연간은 단일 조회만 지원
+            dates_to_fetch.append(start_date)
+
+        total_calls = len(dates_to_fetch)
+        for i, current_date in enumerate(dates_to_fetch):
+            date_str = current_date.strftime("%Y-%m-%d")
+            worker_instance.log.emit(
+                "INFO", f"   - '{date_str}' 기준 데이터 수집 중..."
+            )
+            worker_instance.progress.emit(int((i + 1) / total_calls * 100))
+
+            # [수정] API URL에 time_dimension 파라미터 적용
+            api_url = f"https://blog.stat.naver.com/api/blog/rank/cvContentPc?timeDimension={time_dimension}&startDate={date_str}"
+
+            try:
+                response = requests.get(
+                    api_url,
+                    cookies=cookies,
+                    headers={"Referer": "https://blog.stat.naver.com/"},
+                    timeout=10,
+                )
+                response.raise_for_status()
+
+                j = response.json()
+                if j.get("statusCode") == 200:
+                    rows = (
+                        j.get("result", {})
+                        .get("statDataList")[0]
+                        .get("data", {})
+                        .get("rows")
+                    )
+                    if not rows or not rows.get("date"):
+                        worker_instance.log.emit(
+                            "WARNING", f"   - '{date_str}'에 데이터가 없습니다."
+                        )
+                        continue
+
+                    zipped_data = zip(
+                        rows.get("date", []),
+                        rows.get("rank", []),
+                        rows.get("cv", []),
+                        rows.get("title", []),
+                        rows.get("uri", []),
+                    )
+
+                    for date, rank, cv, title, uri in zipped_data:
+                        post_url = uri
+                        if not uri.startswith("http"):
+                            post_url = f"{self.BLOG_BASE_URL}{uri}"
+
+                        all_view_data.append(
+                            {
+                                "날짜": date,
+                                "순위": rank,
+                                "조회수": cv,
+                                "제목": title,
+                                "게시물_주소": post_url,
+                            }
+                        )
+                else:
+                    worker_instance.log.emit(
+                        "WARNING",
+                        f"   - '{date_str}' 데이터 요청 실패 (상태코드: {j.get('statusCode')})",
+                    )
+
+                time.sleep(0.2)
+            except Exception as e:
+                worker_instance.log.emit(
+                    "ERROR", f"   - '{date_str}' 처리 중 오류: {e}"
+                )
+
+        return all_view_data
 
     def save_auth_logic(self, worker_instance):
         worker_instance.log.emit("INFO", "🔒 인증 정보 갱신을 시작합니다...")
@@ -815,10 +1275,6 @@ class KeywordApp(QMainWindow):
                 json.dump(storage_state, f, ensure_ascii=False, indent=4)
             return "✅ 인증 정보(auth.json)가 성공적으로 갱신되었습니다!"
         except Exception as e:
-            import traceback
-
-            error_msg = f"인증 절차 중 오류 발생: {e}\n{traceback.format_exc()}"
-            worker_instance.log.emit("ERROR", error_msg)
             raise e
         finally:
             if driver:
@@ -903,7 +1359,10 @@ class KeywordApp(QMainWindow):
         )
         return sorted(list(all_results))
 
-    # [추가] 트렌드 테이블을 데이터로 채우는 헬퍼 함수
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ Worker 완료 후 UI 업데이트 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
+
     def populate_trend_table(self, data_to_show):
         self.trend_table.setRowCount(len(data_to_show))
         for row_idx, item in enumerate(data_to_show):
@@ -928,31 +1387,23 @@ class KeywordApp(QMainWindow):
             self.trend_table.setItem(row_idx, 2, rank_item)
         self.trend_table.resizeColumnsToContents()
 
-    # [수정] 트렌드 수집 완료 후 UI 처리 로직 변경
     def on_trend_fetching_finished(self, trend_data):
         self.fetch_trends_button.setDisabled(False)
         self.progress_bar_fetch.setValue(100)
-
         if not trend_data:
             self.status_label_fetch.setText("❌ 수집된 트렌드 키워드가 없습니다.")
-            self.log_message("WARNING", "트렌드 키워드 수집 결과가 없습니다.")
             return
-
-        self.all_trend_data = trend_data  # [추가] 전체 데이터를 인스턴스 변수에 저장
+        self.all_trend_data = trend_data
         self.status_label_fetch.setText(
             f"✅ {len(self.all_trend_data)}개 트렌드 키워드 수집 완료!"
         )
         self.log_message("SUCCESS", "트렌드 키워드 수집이 완료되었습니다.")
-
-        # [추가] 카테고리 필터 콤보박스 채우기
-        self.category_filter_combo.blockSignals(True)  # 신호 막기
+        self.category_filter_combo.blockSignals(True)
         self.category_filter_combo.clear()
         categories = sorted(list(set(item["카테고리"] for item in self.all_trend_data)))
         self.category_filter_combo.addItem("전체 보기")
         self.category_filter_combo.addItems(categories)
-        self.category_filter_combo.blockSignals(False)  # 신호 다시 연결
-
-        # [추가] 테이블 채우고 버튼들 활성화
+        self.category_filter_combo.blockSignals(False)
         self.populate_trend_table(self.all_trend_data)
         self.copy_to_analyzer_button.setDisabled(False)
         self.category_filter_combo.setDisabled(False)
@@ -977,26 +1428,18 @@ class KeywordApp(QMainWindow):
             self.autocomplete_table.setItem(row_idx, 0, QTableWidgetItem(keyword))
         self.autocomplete_table.resizeColumnsToContents()
         self.autocomplete_search_button.setDisabled(False)
-        self.log_message("SUCCESS", "자동완성 키워드 수집이 완료되었습니다.")
 
     def on_naver_main_finished(self, results):
         self.fetch_main_content_button.setDisabled(False)
         self.naver_main_table.setRowCount(len(results))
         for row_idx, item in enumerate(results):
-            rank_item = QTableWidgetItem(item["rank"])
+            rank_item, title_item = QTableWidgetItem(item["rank"]), QTableWidgetItem(
+                item["title"]
+            )
             rank_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            title_item = QTableWidgetItem(item["title"])
             title_item.setData(Qt.ItemDataRole.UserRole, item["link"])
             self.naver_main_table.setItem(row_idx, 0, rank_item)
             self.naver_main_table.setItem(row_idx, 1, title_item)
-        self.log_message("SUCCESS", "네이버 메인 유입 콘텐츠 업데이트 완료.")
-
-    def open_browser_link(self, row, column):
-        if column == 1:
-            item = self.naver_main_table.item(row, column)
-            if item and (link := item.data(Qt.ItemDataRole.UserRole)):
-                webbrowser.open(link)
-                self.log_message("INFO", f"브라우저에서 링크를 엽니다: {link}")
 
     def on_auth_finished(self, message):
         self.auth_button.setDisabled(False)
@@ -1012,24 +1455,90 @@ class KeywordApp(QMainWindow):
         self.auth_button.setDisabled(False)
         self.autocomplete_search_button.setDisabled(False)
         self.fetch_main_content_button.setDisabled(False)
+        self.fetch_blog_views_button.setDisabled(False)  # [추가] 오류 시 버튼 활성화
 
-    # [추가] '순위변동' 컬럼을 위한 커스텀 정렬 함수
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼ [신규 추가] 블로그 조회수 완료 및 테이블 채우기 ▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
+    def on_fetch_blog_views_finished(self, view_data):
+        self.fetch_blog_views_button.setDisabled(False)
+        self.progress_bar_bv.setValue(100)
+
+        # 수정: time_dim_group을 bv_mode_group으로 변경
+        selected_id = self.bv_mode_group.checkedId()
+
+        # 조회 단위에 따라 테이블 헤더 변경
+        header_label = "날짜" if selected_id == 0 else "기간"
+        self.blog_views_table.horizontalHeaderItem(0).setText(header_label)
+
+        if not view_data:
+            self.status_label_bv.setText("❌ 수집된 조회수 데이터가 없습니다.")
+            self.log_message("WARNING", "블로그 조회수 순위 수집 결과가 없습니다.")
+            return
+
+        self.blog_views_df = pd.DataFrame(view_data)
+        self.status_label_bv.setText(
+            f"✅ {len(self.blog_views_df)}개 데이터 수집 완료!"
+        )
+        self.log_message("SUCCESS", "블로그 조회수 순위 수집이 완료되었습니다.")
+
+        self.populate_blog_views_table(self.blog_views_df)
+        self.export_blog_views_button.setDisabled(False)
+
+    # 2. 데이터를 테이블에 채워넣는 함수
+    def populate_blog_views_table(self, df):
+        self.blog_views_table.setRowCount(len(df))
+        for row_idx, row_data in enumerate(df.itertuples()):
+            # 날짜, 순위, 조회수는 동일
+            self.blog_views_table.setItem(
+                row_idx, 0, QTableWidgetItem(str(row_data.날짜))
+            )
+            self.blog_views_table.setItem(
+                row_idx, 1, QTableWidgetItem(str(row_data.순위))
+            )
+            self.blog_views_table.setItem(
+                row_idx, 2, QTableWidgetItem(f"{row_data.조회수:,}")
+            )
+
+            # [수정] 제목 셀을 생성하고, 보이지 않는 데이터(UserRole)로 링크를 저장
+            title_item = QTableWidgetItem(str(row_data.제목))
+            title_item.setData(Qt.ItemDataRole.UserRole, str(row_data.게시물_주소))
+            self.blog_views_table.setItem(row_idx, 3, title_item)
+            # '게시물 주소'를 직접 표시하는 코드는 삭제됨
+
+        # 컬럼 너비 조정
+        self.blog_views_table.resizeColumnsToContents()
+        self.blog_views_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
+        )
+
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 기타 UI 이벤트 핸들러들 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
+
+    def open_browser_link(self, row, column):
+        if column == 1:
+            item = self.naver_main_table.item(row, column)
+            if item and (link := item.data(Qt.ItemDataRole.UserRole)):
+                webbrowser.open(link)
+
+    # ▼▼▼▼▼ [신규 추가] 블로그 조회수 테이블 링크 여는 함수 ▼▼▼▼▼
+    def open_blog_view_link(self, row, column):
+        # 제목 컬럼(인덱스 3)을 클릭했을 때만 동작
+        if column == 3:
+            item = self.blog_views_table.item(row, column)
+            if item and (link := item.data(Qt.ItemDataRole.UserRole)):
+                webbrowser.open(link)
+                self.log_message("INFO", f"브라우저에서 링크를 엽니다: {link}")
+
     def sort_trend_table_by_rank_change(self, logicalIndex):
-        # '순위변동' 컬럼(인덱스 2)이 아니면 아무것도 하지 않음
-        if logicalIndex != 2:
+        if logicalIndex != 2 or not self.currently_displayed_data:
             return
-
-        # [수정] 데이터가 없을 때의 기준을 표시 데이터로 변경
-        if not self.currently_displayed_data:
-            return
-
-        # 정렬 순서 변경 (오름차순 <-> 내림차순)
-        if self.rank_sort_order == Qt.SortOrder.AscendingOrder:
-            self.rank_sort_order = Qt.SortOrder.DescendingOrder
-        else:
-            self.rank_sort_order = Qt.SortOrder.AscendingOrder
-
-        # [수정] 전체 데이터가 아닌, 현재 표시된 데이터를 기준으로 정렬
+        self.rank_sort_order = (
+            Qt.SortOrder.DescendingOrder
+            if self.rank_sort_order == Qt.SortOrder.AscendingOrder
+            else Qt.SortOrder.AscendingOrder
+        )
         new_items = [
             item for item in self.currently_displayed_data if item["순위변동"] is None
         ]
@@ -1038,31 +1547,17 @@ class KeywordApp(QMainWindow):
             for item in self.currently_displayed_data
             if item["순위변동"] is not None
         ]
-
-        # 2. 숫자 항목만 정렬
         is_descending = self.rank_sort_order == Qt.SortOrder.DescendingOrder
         other_items.sort(key=lambda x: x["순위변동"], reverse=is_descending)
-
-        # 3. 'NEW' 항목을 맨 위로 하여 두 리스트를 합침
         sorted_data = new_items + other_items
-
-        # 4. 정렬된 데이터로 테이블을 다시 채움
         self.populate_trend_table(sorted_data)
-
-        # 5. 헤더에 정렬 방향 표시(▲/▼) 업데이트
         self.trend_table.horizontalHeader().setSortIndicatorShown(True)
         self.trend_table.horizontalHeader().setSortIndicator(2, self.rank_sort_order)
 
-        order_text = "내림차순" if is_descending else "오름차순"
-        self.log_message("INFO", f"순위변동 컬럼을 {order_text}으로 정렬했습니다.")
-
-    # [추가] 트렌드 테이블 필터링 함수
     def filter_trend_table(self):
         selected_category = self.category_filter_combo.currentText()
         if not self.all_trend_data:
             return
-
-        # [수정] 필터링 결과를 self.currently_displayed_data에 저장
         if selected_category == "전체 보기":
             self.currently_displayed_data = self.all_trend_data
         else:
@@ -1071,11 +1566,7 @@ class KeywordApp(QMainWindow):
                 for item in self.all_trend_data
                 if item["카테고리"] == selected_category
             ]
-
-        # [수정] 필터링된 데이터로 테이블 채우기
         self.populate_trend_table(self.currently_displayed_data)
-
-        self.log_message("INFO", f"'{selected_category}' 카테고리로 필터링되었습니다.")
 
     def copy_trends_to_analyzer(self):
         if self.trend_table.rowCount() > 0:
@@ -1129,43 +1620,31 @@ class KeywordApp(QMainWindow):
             )
         self.result_table.resizeColumnsToContents()
 
-    # [추가] 트렌드 키워드 엑셀 저장 함수
-    # [수정] 트렌드 키워드 엑셀 저장 함수 (서식 강화)
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 엑셀 저장 메서드들 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
 
     def export_trends_to_excel(self):
         if self.trend_table.rowCount() == 0:
             QMessageBox.warning(self, "경고", "엑셀로 내보낼 데이터가 없습니다.")
             return
-
-        # [추가] output 폴더 생성 로직
         output_dir = "output"
         os.makedirs(output_dir, exist_ok=True)
-
-        # 현재 테이블에 보이는 데이터를 읽어옴
-        data_to_export = []
-        for row in range(self.trend_table.rowCount()):
-            data_to_export.append(
-                {
-                    "카테고리": self.trend_table.item(row, 0).text(),
-                    "키워드": self.trend_table.item(row, 1).text(),
-                    "순위변동": self.trend_table.item(row, 2).text(),
-                }
-            )
-
+        data_to_export = [
+            {
+                "카테고리": self.trend_table.item(row, 0).text(),
+                "키워드": self.trend_table.item(row, 1).text(),
+                "순위변동": self.trend_table.item(row, 2).text(),
+            }
+            for row in range(self.trend_table.rowCount())
+        ]
         df = pd.DataFrame(data_to_export)
         filename = f"trend_keywords_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-
-        # [수정] 파일명을 전체 경로로 변경
         filepath = os.path.join(output_dir, filename)
-
         try:
             with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
                 df.to_excel(writer, index=False, sheet_name="TrendKeywords")
-
-                # [수정] 워크북과 워크시트 객체 가져오기
-                workbook = writer.book
-                worksheet = writer.sheets["TrendKeywords"]
-
+                workbook, worksheet = writer.book, writer.sheets["TrendKeywords"]
                 header_format = workbook.add_format(
                     {
                         "bold": True,
@@ -1176,44 +1655,23 @@ class KeywordApp(QMainWindow):
                         "border": 1,
                     }
                 )
-
-                # [추가] 자동 줄 바꿈 서식
-                wrap_format = writer.book.add_format(
-                    {"text_wrap": True, "valign": "top", "border": 1}
-                )
-                default_format = writer.book.add_format({"valign": "top", "border": 1})
-
                 for col_num, value in enumerate(df.columns.values):
                     worksheet.write(0, col_num, value, header_format)
-
-                # [수정] 데이터 직접 작성 (줄 바꿈 서식 적용)
-                for row_idx, row in enumerate(df.itertuples(index=False), 1):
-                    # 카테고리
-                    worksheet.write(row_idx, 0, row.카테고리, default_format)
-                    # 키워드 (줄 바꿈 적용)
-                    worksheet.write(row_idx, 1, row.키워드, wrap_format)
-                    # 순위변동
-                    worksheet.write(row_idx, 2, row.순위변동, default_format)
-
-                # 열 너비 자동 맞춤
                 for idx, col in enumerate(df):
-                    series = df[col]
                     max_len = (
-                        max((series.astype(str).map(len).max(), len(str(series.name))))
+                        max(
+                            (df[col].astype(str).map(len).max(), len(str(df[col].name)))
+                        )
                         + 2
                     )
-                    # '키워드' 열은 너비를 좀 더 넉넉하게 설정
                     if col == "키워드":
                         max_len = 50
                     worksheet.set_column(idx, idx, max_len)
-
-            # [수정] 성공 메시지에 전체 경로 표시
             self.log_message("SUCCESS", f"✅ 성공! '{filename}' 파일이 저장되었습니다.")
             QMessageBox.information(
                 self, "성공", f"'{filename}' 파일이 성공적으로 저장되었습니다."
             )
         except Exception as e:
-            self.log_message("ERROR", f"🚨 엑셀 저장 실패: {e}")
             QMessageBox.critical(
                 self, "오류", f"엑셀 파일 저장 중 오류가 발생했습니다:\n{e}"
             )
@@ -1227,27 +1685,14 @@ class KeywordApp(QMainWindow):
                 self, "알림", "저장할 키워드가 없습니다. '일반' 분류만 존재합니다."
             )
             return
-
-        # [추가] output 폴더 생성 로직
         output_dir = "output"
         os.makedirs(output_dir, exist_ok=True)
-
         filename = f"keyword_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-
-        # [수정] 파일명을 전체 경로로 변경
         filepath = os.path.join(output_dir, filename)
-
         try:
             with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
-                df = filtered_df  # 편의를 위해 변수명 변경
-                df.to_excel(writer, index=False, sheet_name="KeywordAnalysis")
+                filtered_df.to_excel(writer, index=False, sheet_name="KeywordAnalysis")
                 workbook, worksheet = writer.book, writer.sheets["KeywordAnalysis"]
-
-                # [수정] 워크북과 워크시트 객체 가져오기
-                workbook = writer.book
-                worksheet = writer.sheets["KeywordAnalysis"]
-
-                # [수정] 헤더 서식 정의
                 header_format = workbook.add_format(
                     {
                         "bold": True,
@@ -1258,35 +1703,75 @@ class KeywordApp(QMainWindow):
                         "border": 1,
                     }
                 )
-
-                wrap_format = writer.book.add_format(
-                    {"text_wrap": True, "valign": "top", "border": 1}
-                )
-                default_format = writer.book.add_format({"valign": "top", "border": 1})
-
-                for col_num, value in enumerate(df.columns.values):
+                for col_num, value in enumerate(filtered_df.columns.values):
                     worksheet.write(0, col_num, value, header_format)
-
-                # [수정] 데이터 직접 작성 (줄 바꿈 서식 적용)
-                for row_idx, row in enumerate(df.itertuples(index=False), 1):
-                    col_idx = 0
-                    for value in row:
-                        # '키워드' 열에만 자동 줄 바꿈 서식 적용
-                        if df.columns[col_idx] == "키워드":
-                            worksheet.write(row_idx, col_idx, value, wrap_format)
-                        else:
-                            worksheet.write(row_idx, col_idx, value, default_format)
-                        col_idx += 1
-
-                # 열 너비 자동 맞춤
-                for idx, col in enumerate(df):
-                    series = df[col]
+                for idx, col in enumerate(filtered_df):
                     max_len = (
-                        max((series.astype(str).map(len).max(), len(str(series.name))))
+                        max(
+                            (
+                                filtered_df[col].astype(str).map(len).max(),
+                                len(str(filtered_df[col].name)),
+                            )
+                        )
                         + 2
                     )
-                    # '키워드' 열 너비를 50으로 고정
                     if col == "키워드":
+                        max_len = 50
+                    worksheet.set_column(idx, idx, max_len)
+            self.log_message("SUCCESS", f"✅ 성공! '{filename}' 파일이 저장되었습니다.")
+            QMessageBox.information(
+                self, "성공", f"'{filename}' 파일이 성공적으로 저장되었습니다."
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "오류", f"엑셀 파일 저장 중 오류가 발생했습니다:\n{e}"
+            )
+
+    # ------------------------------------------------------------------
+    # ▼▼▼▼▼▼▼▼▼▼▼▼ [신규 추가] 블로그 조회수 엑셀 저장 메서드 ▼▼▼▼▼▼▼▼▼▼▼
+    # ------------------------------------------------------------------
+    def export_blog_views_to_excel(self):
+        if not hasattr(self, "blog_views_df") or self.blog_views_df.empty:
+            QMessageBox.warning(self, "경고", "엑셀로 내보낼 데이터가 없습니다.")
+            return
+
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"blog_views_rank_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filepath = os.path.join(output_dir, filename)
+
+        try:
+            with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
+                self.blog_views_df.to_excel(
+                    writer, index=False, sheet_name="BlogViewRank"
+                )
+                workbook = writer.book
+                worksheet = writer.sheets["BlogViewRank"]
+                header_format = workbook.add_format(
+                    {
+                        "bold": True,
+                        "font_color": "white",
+                        "bg_color": "#007BFF",
+                        "align": "center",
+                        "valign": "vcenter",
+                        "border": 1,
+                    }
+                )
+
+                for col_num, value in enumerate(self.blog_views_df.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
+
+                for idx, col in enumerate(self.blog_views_df):
+                    max_len = (
+                        max(
+                            self.blog_views_df[col].astype(str).map(len).max(),
+                            len(str(col)),
+                        )
+                        + 2
+                    )
+                    if col == "제목":
+                        max_len = 60
+                    if col == "게시물 주소":
                         max_len = 50
                     worksheet.set_column(idx, idx, max_len)
 
