@@ -11,6 +11,7 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+from update_checker import UpdateChecker, get_current_version
 import xml.etree.ElementTree as ET
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
@@ -261,7 +262,14 @@ class KeywordApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("키워드 분석기 Pro v2.1")  # [수정] 버전 업데이트
+        self.current_version = get_current_version()
+        self.setWindowTitle(f"키워드 분석기 Pro v{self.current_version}")
+        
+        # 업데이트 체커 초기화
+        self.update_checker = UpdateChecker(self.current_version, "access1061/KeywordAnalytics")
+        self.update_checker.update_available.connect(self.on_update_available)
+        self.update_checker.error_occurred.connect(self.on_update_error)
+        self.update_checker.start()
         self.setGeometry(100, 100, 1100, 800)
         self.setStyleSheet(load_stylesheet())
 
@@ -1103,13 +1111,47 @@ class KeywordApp(QMainWindow):
             time.sleep(0.15)
         return pd.DataFrame(analysis_results)
 
+    def verify_auth(self, worker_instance=None):
+        """인증 상태를 검증하고 필요한 경우 재인증을 수행하는 함수"""
+        cookies = load_cookies_from_auth_file()
+        if not cookies:
+            if worker_instance:
+                worker_instance.log.emit("WARNING", "인증 파일을 찾을 수 없어 재인증을 시도합니다.")
+            return self.save_auth_logic(worker_instance) if worker_instance else False
+
+        # 인증 상태 테스트
+        test_url = "https://creator-advisor.naver.com/api/v6/user/info"
+        try:
+            response = requests.get(
+                test_url,
+                cookies=cookies,
+                headers={"Referer": "https://creator-advisor.naver.com/"},
+                timeout=10
+            )
+            if response.status_code == 200:
+                return True
+            else:
+                if worker_instance:
+                    worker_instance.log.emit("WARNING", "인증이 만료되어 재인증을 시도합니다.")
+                return self.save_auth_logic(worker_instance) if worker_instance else False
+        except:
+            if worker_instance:
+                worker_instance.log.emit("WARNING", "인증 확인 중 오류가 발생하여 재인증을 시도합니다.")
+            return self.save_auth_logic(worker_instance) if worker_instance else False
+
     def fetch_naver_main_worker(self, worker_instance):
         worker_instance.log.emit("INFO", "네이버 메인 유입 콘텐츠 API를 호출합니다...")
+        
+        # 인증 상태 확인 및 필요시 재인증
+        if not self.verify_auth(worker_instance):
+            raise ValueError("인증에 실패했습니다. 수동으로 '인증 정보 갱신'을 실행해주세요.")
+            
         cookies = load_cookies_from_auth_file()
         if not cookies:
             raise ValueError(
                 "'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신'을 먼저 실행해주세요."
             )
+            
         yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         api_url = (
             "https://creator-advisor.naver.com/api/v6/trend/main-inflow-content-ranks"
@@ -1140,10 +1182,16 @@ class KeywordApp(QMainWindow):
             return results
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 401:
-                raise ValueError(
-                    "인증 확인 실패 (HTTP 401). '인증 정보 갱신'이 필요할 수 있습니다."
-                )
-            raise e
+                # 401 에러 발생 시 재인증 시도
+                worker_instance.log.emit("WARNING", "인증이 만료되어 재인증을 시도합니다...")
+                if self.verify_auth(worker_instance):
+                    worker_instance.log.emit("SUCCESS", "재인증 성공! 데이터를 다시 가져옵니다.")
+                    # 재귀적으로 다시 시도
+                    return self.fetch_naver_main_worker(worker_instance)
+                else:
+                    raise ValueError("재인증 실패. '인증 정보 갱신' 버튼을 눌러 수동으로 인증해주세요.")
+            worker_instance.log.emit("ERROR", f"API 요청 실패: {e}")
+            raise ValueError(f"API 요청 실패: {e}")
         except Exception as e:
             worker_instance.log.emit(
                 "ERROR", f"네이버 메인 콘텐츠 API 호출 중 오류: {e}"
@@ -1796,6 +1844,22 @@ class KeywordApp(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f'<font color="{color}">[{timestamp}] - {level} - {message}</font>'
         self.log_widget.append(log_entry)
+        
+    def on_update_available(self, current_version, new_version):
+        """새로운 업데이트가 있을 때 호출되는 메서드"""
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("업데이트 알림")
+        msg.setText(f"새로운 버전이 있습니다!\n현재 버전: v{current_version}\n새로운 버전: v{new_version}")
+        msg.setInformativeText("GitHub 페이지에서 새 버전을 다운로드하시겠습니까?")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            webbrowser.open(f"https://github.com/access1061/KeywordAnalytics/releases/latest")
+            
+    def on_update_error(self, error_message):
+        """업데이트 체크 중 에러 발생시 호출되는 메서드"""
+        self.log_message("WARNING", f"업데이트 확인 중 오류 발생: {error_message}")
 
 
 if __name__ == "__main__":
