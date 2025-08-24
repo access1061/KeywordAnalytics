@@ -266,7 +266,7 @@ class KeywordApp(QMainWindow):
         self.setWindowTitle(f"키워드 분석기 Pro v{self.current_version}")
         
         # 업데이트 체커 초기화
-        self.update_checker = UpdateChecker(self.current_version, "access1061/KeywordAnalytics")
+        self.update_checker = UpdateChecker(self.current_version)
         self.update_checker.update_available.connect(self.on_update_available)
         self.update_checker.error_occurred.connect(self.on_update_error)
         self.update_checker.start()
@@ -1119,37 +1119,61 @@ class KeywordApp(QMainWindow):
                 worker_instance.log.emit("WARNING", "인증 파일을 찾을 수 없어 재인증을 시도합니다.")
             return self.save_auth_logic(worker_instance) if worker_instance else False
 
-        # 인증 상태 테스트
-        test_url = "https://creator-advisor.naver.com/api/v6/user/info"
+        # 인증 상태 테스트 - 실제 데이터를 가져오는 API로 테스트
+        test_url = "https://creator-advisor.naver.com/api/v6/trend/main-inflow-content-ranks"
+        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        params = {"service": "naver_blog", "date": yesterday_str, "interval": "day"}
+        
         try:
             response = requests.get(
                 test_url,
+                params=params,
                 cookies=cookies,
                 headers={"Referer": "https://creator-advisor.naver.com/"},
                 timeout=10
             )
+            
+            # 응답 내용 확인
             if response.status_code == 200:
-                return True
-            else:
+                try:
+                    json_response = response.json()
+                    if 'data' in json_response:  # 실제 데이터가 있는지 확인
+                        if worker_instance:
+                            worker_instance.log.emit("SUCCESS", "✅ 인증이 유효합니다.")
+                        return True
+                except:
+                    pass
+            
+            # 401 상태 코드 특별 처리
+            if response.status_code == 401:
                 if worker_instance:
-                    worker_instance.log.emit("WARNING", "인증이 만료되어 재인증을 시도합니다.")
+                    worker_instance.log.emit("WARNING", "인증이 만료되어 재인증이 필요합니다.")
                 return self.save_auth_logic(worker_instance) if worker_instance else False
-        except:
+            
+            # 기타 오류
             if worker_instance:
-                worker_instance.log.emit("WARNING", "인증 확인 중 오류가 발생하여 재인증을 시도합니다.")
-            return self.save_auth_logic(worker_instance) if worker_instance else False
+                worker_instance.log.emit("WARNING", f"인증 확인 실패 (상태 코드: {response.status_code})")
+            return False
+            
+        except requests.exceptions.RequestException as e:
+            if worker_instance:
+                worker_instance.log.emit("WARNING", f"인증 확인 중 네트워크 오류: {str(e)}")
+            return False
 
     def fetch_naver_main_worker(self, worker_instance):
         worker_instance.log.emit("INFO", "네이버 메인 유입 콘텐츠 API를 호출합니다...")
         
-        # 인증 상태 확인 및 필요시 재인증
-        if not self.verify_auth(worker_instance):
-            raise ValueError("인증에 실패했습니다. 수동으로 '인증 정보 갱신'을 실행해주세요.")
-            
         cookies = load_cookies_from_auth_file()
         if not cookies:
             raise ValueError(
                 "'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신'을 먼저 실행해주세요."
+            )
+            
+        # 인증 상태를 먼저 확인하고, 실패하면 명시적 메시지 표시
+        auth_result = self.verify_auth(worker_instance)
+        if not auth_result:
+            raise ValueError(
+                "인증이 유효하지 않습니다. '인증 정보 갱신' 버튼을 눌러 다시 로그인해주세요."
             )
             
         yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -1306,6 +1330,18 @@ class KeywordApp(QMainWindow):
         try:
             service = ChromeService(ChromeDriverManager().install())
             options = webdriver.ChromeOptions()
+            # 불필요한 로그 메시지 제거
+            options.add_experimental_option('excludeSwitches', ['enable-logging'])
+            # 성능 최적화 옵션
+            options.add_argument('--disable-gpu')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-extensions')
+            options.add_argument('--disable-notifications')
+            options.add_argument('--disable-infobars')
+            # 기본 Chrome 프로필 사용 방지
+            options.add_argument('--incognito')
+            
             driver = webdriver.Chrome(service=service, options=options)
             driver.get("https://nid.naver.com/nidlogin.login")
             worker_instance.log.emit(
@@ -1845,21 +1881,13 @@ class KeywordApp(QMainWindow):
         log_entry = f'<font color="{color}">[{timestamp}] - {level} - {message}</font>'
         self.log_widget.append(log_entry)
         
-    def on_update_available(self, current_version, new_version):
-        """새로운 업데이트가 있을 때 호출되는 메서드"""
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Icon.Information)
-        msg.setWindowTitle("업데이트 알림")
-        msg.setText(f"새로운 버전이 있습니다!\n현재 버전: v{current_version}\n새로운 버전: v{new_version}")
-        msg.setInformativeText("GitHub 페이지에서 새 버전을 다운로드하시겠습니까?")
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        
-        if msg.exec() == QMessageBox.StandardButton.Yes:
-            webbrowser.open(f"https://github.com/access1061/KeywordAnalytics/releases/latest")
+    def on_update_available(self, current_version):
+        """현재 버전 정보를 표시하는 메서드"""
+        self.log_message("INFO", f"현재 프로그램 버전: v{current_version}")
             
     def on_update_error(self, error_message):
         """업데이트 체크 중 에러 발생시 호출되는 메서드"""
-        self.log_message("WARNING", f"업데이트 확인 중 오류 발생: {error_message}")
+        self.log_message("WARNING", f"버전 확인 중 오류 발생: {error_message}")
 
 
 if __name__ == "__main__":
