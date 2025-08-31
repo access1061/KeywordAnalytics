@@ -1,4 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import sys
+
+# 상단의 불필요한 selenium import 제거
 
 block_cipher = None
 
@@ -10,9 +14,12 @@ a = Analysis(
         ('version.json', '.'),
         ('style.qss', '.'),
         ('keyword_pro.ico', '.'),
-        ('api.env', '.')
+        ('api.env', '.'),
+        ('update_checker.py', '.')  # [수정] update_checker.py 파일 포함
+        # ('chrome_utils.py', '.') # [수정] 더 이상 사용하지 않으므로 제거
     ],
-    hiddenimports=['PyQt6', 'pandas', 'requests', 'python-dotenv'],
+    # [수정] selenium과 webdriver_manager 추가
+    hiddenimports=['PyQt6', 'pandas', 'requests', 'python-dotenv', 'selenium', 'webdriver_manager'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -32,7 +39,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='키워드 분석기 Pro',
+    name='keyword_Pro',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
