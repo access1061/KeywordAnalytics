@@ -3,3 +3,10 @@ pyinstaller --noconsole --onefile --icon="keyword_pro.ico" --name="Keyword_Pro" 
 
 
 pyinstaller keyword_analyzer.spec --clean
+
+
+pip install -r requirements.txt
+
+python -m venv venv
+
+venv\Scripts\activate

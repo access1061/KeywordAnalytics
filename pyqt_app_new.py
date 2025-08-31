@@ -15,8 +15,10 @@ from update_checker import UpdateChecker, get_current_version
 import xml.etree.ElementTree as ET
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
+# ▼▼▼ [수정] webdriver-manager를 다시 사용합니다 ▼▼▼
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
+from multiprocessing import Process, Queue, freeze_support
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -43,18 +45,16 @@ from PyQt6.QtWidgets import (
     QCalendarWidget,
     QGroupBox,
 )
-from PyQt6.QtGui import QIcon, QColor, QFont, QPainter, QBrush, QPen
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QPoint
+from PyQt6.QtGui import QIcon, QColor, QFont
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QPoint, QTimer
 
 
-# --- PyInstaller를 위한 리소스 경로 설정 함수 ---
 def resource_path(relative_path):
     if hasattr(sys, "_MEIPASS"):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
 
-# 스타일시트 파일을 읽어오는 함수
 def load_stylesheet():
     try:
         with open(resource_path("style.qss"), "r", encoding="utf-8") as f:
@@ -62,6 +62,42 @@ def load_stylesheet():
     except FileNotFoundError:
         return ""
 
+def save_auth_process(queue: Queue):
+    driver = None
+    try:
+        # ▼▼▼ [수정] ChromeDriver를 자동으로 다운로드하고 경로를 설정합니다 ▼▼▼
+        service = ChromeService(ChromeDriverManager().install())
+        # ▲▲▲ 수정 완료 ▲▲▲
+        
+        options = webdriver.ChromeOptions()
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        options.add_argument('--disable-gpu')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        
+        temp_profile_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Temp", "ChromeProfileForKeywordApp")
+        options.add_argument(f'--user-data-dir={temp_profile_path}')
+
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.get("https://nid.naver.com/nidlogin.login")
+        
+        WebDriverWait(driver, 300).until(
+            lambda d: "nid.naver.com" not in d.current_url
+        )
+        
+        storage_state = {"cookies": driver.get_cookies()}
+        with open("auth.json", "w", encoding="utf-8") as f:
+            json.dump(storage_state, f, ensure_ascii=False, indent=4)
+        
+        queue.put(("SUCCESS", "✅ 인증 정보(auth.json)가 성공적으로 갱신되었습니다!"))
+
+    except Exception as e:
+        queue.put(("ERROR", str(e)))
+    finally:
+        if driver:
+            driver.quit()
+
+# (이하 나머지 코드는 이전과 동일합니다)
 
 # --- API 관련 헬퍼 클래스 및 함수 ---
 class Signature:
@@ -95,10 +131,8 @@ def get_naver_ad_keywords(
     signature = signature_generator.generate(timestamp, method, uri, secret_key)
     headers = {
         "Content-Type": "application/json; charset=UTF-8",
-        "X-Timestamp": timestamp,
-        "X-API-KEY": api_key,
-        "X-Customer": str(customer_id),
-        "X-Signature": signature,
+        "X-Timestamp": timestamp, "X-API-KEY": api_key,
+        "X-Customer": str(customer_id), "X-Signature": signature,
     }
     params = {"hintKeywords": keyword.replace(" ", ""), "showDetail": "1"}
     r = requests.get(base_url + uri, params=params, headers=headers, timeout=10)
@@ -134,9 +168,7 @@ class Worker(QObject):
             self.finished.emit(result)
         except Exception as e:
             import traceback
-
             self.error.emit(f"{e}\n{traceback.format_exc()}")
-
 
 class WeeklyCalendarWidget(QCalendarWidget):
     def __init__(self, parent=None):
@@ -204,7 +236,7 @@ class MonthPickerDialog(QDialog):
     def select_month(self, month):
         self.month_selected.emit(QDate(self.current_year, month, 1))
         self.accept()
-
+        
 
 class KeywordApp(QMainWindow):
     NAVER_TOPIC_TRENDS_API_URL = "https://creator-advisor.naver.com/api/v6/trend/category"
@@ -229,7 +261,6 @@ class KeywordApp(QMainWindow):
         "m_03", "f_02", "m_10", "m_02", "f_01", "m_01"
     ]
     
-    # ▼▼▼ [수정] 제공해주신 정보로 DEMO_MAP 업데이트 ▼▼▼
     DEMO_MAP = {
         'f_01': '0-12세 여자', 'f_02': '13-18세 여자', 'f_03': '19-24세 여자',
         'f_04': '25-29세 여자', 'f_05': '30-34세 여자', 'f_06': '35-39세 여자',
@@ -270,6 +301,12 @@ class KeywordApp(QMainWindow):
         self.currently_displayed_data = []
         self.bv_current_date = QDate.currentDate()
         self.bv_calendar_popup = None
+        
+        self.auth_process = None
+        self.auth_queue = Queue()
+        self.auth_check_timer = QTimer(self)
+        self.auth_check_timer.timeout.connect(self.check_auth_process)
+        
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         top_level_layout = QVBoxLayout(central_widget)
@@ -684,8 +721,34 @@ class KeywordApp(QMainWindow):
 
     def start_auth_regeneration(self):
         self.auth_button.setDisabled(True)
-        self.log_message("INFO", "사용자 인증 갱신 프로세스를 시작합니다.")
-        self.run_worker(self.save_auth_logic, self.on_auth_finished)
+        self.log_message("INFO", "🔒 사용자 인증 갱신 프로세스를 시작합니다...")
+        self.log_message("WARNING", "새 창에서 네이버 로그인을 진행해주세요. 완료되면 창이 자동으로 닫힙니다.")
+        
+        if self.auth_process and self.auth_process.is_alive():
+            self.auth_process.terminate()
+
+        self.auth_process = Process(target=save_auth_process, args=(self.auth_queue,))
+        self.auth_process.start()
+        self.auth_check_timer.start(1000)
+
+    def check_auth_process(self):
+        if not self.auth_queue.empty():
+            status, message = self.auth_queue.get()
+            if status == "SUCCESS":
+                self.log_message("SUCCESS", message)
+                QMessageBox.information(self, "성공", message)
+            else:
+                self.log_message("ERROR", f"인증 중 오류 발생: {message}")
+                QMessageBox.critical(self, "인증 오류", f"인증 중 오류가 발생했습니다:\n{message}")
+            
+            self.auth_check_timer.stop()
+            self.auth_button.setDisabled(False)
+
+        elif self.auth_process and not self.auth_process.is_alive():
+            self.log_message("ERROR", "인증 프로세스가 비정상적으로 종료되었습니다.")
+            QMessageBox.warning(self, "인증 실패", "인증 프로세스가 완료되지 않았습니다. 다시 시도해주세요.")
+            self.auth_check_timer.stop()
+            self.auth_button.setDisabled(False)
 
     def start_autocomplete_search(self):
         keyword = self.autocomplete_input.text().strip()
@@ -956,35 +1019,6 @@ class KeywordApp(QMainWindow):
                 worker_instance.log.emit("ERROR", f"   - '{date_str}' 처리 중 오류: {e}")
         return all_view_data
     
-    def save_auth_logic(self, worker_instance):
-        worker_instance.log.emit("INFO", "🔒 인증 정보 갱신을 시작합니다...")
-        worker_instance.log.emit("WARNING", "새로운 크롬 창에서 네이버 로그인을 직접 진행해주세요.")
-        driver = None
-        try:
-            service = ChromeService(ChromeDriverManager().install())
-            options = webdriver.ChromeOptions()
-            options.add_experimental_option('excludeSwitches', ['enable-logging'])
-            options.add_argument('--disable-gpu')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-extensions')
-            options.add_argument('--disable-notifications')
-            options.add_argument('--disable-infobars')
-            options.add_argument('--incognito')
-            driver = webdriver.Chrome(service=service, options=options)
-            driver.get("https://nid.naver.com/nidlogin.login")
-            worker_instance.log.emit("INFO", "로그인 페이지가 열렸습니다. 로그인이 완료될 때까지 대기합니다...")
-            WebDriverWait(driver, 300).until(lambda d: "nid.naver.com" not in d.current_url)
-            worker_instance.log.emit("INFO", "로그인이 감지되었습니다. 쿠키를 저장합니다...")
-            storage_state = {"cookies": driver.get_cookies()}
-            with open("auth.json", "w", encoding="utf-8") as f:
-                json.dump(storage_state, f, ensure_ascii=False, indent=4)
-            return "✅ 인증 정보(auth.json)가 성공적으로 갱신되었습니다!"
-        except Exception as e:
-            raise e
-        finally:
-            if driver: driver.quit()
-
     def _fetch_naver_autocomplete(self, worker_instance, keyword, all_results):
         try:
             worker_instance.log.emit("INFO", "  - 네이버 검색 중...")
@@ -1074,7 +1108,9 @@ class KeywordApp(QMainWindow):
         self.trend_table.setHorizontalHeaderLabels([first_column_name, "키워드", "순위변동"])
         self.category_filter_combo.blockSignals(True)
         self.category_filter_combo.clear()
+        
         categories = sorted(list(set(item[first_column_name] for item in self.all_trend_data)))
+
         self.category_filter_combo.addItem("전체 보기")
         self.category_filter_combo.addItems(categories)
         self.category_filter_combo.blockSignals(False)
@@ -1323,8 +1359,16 @@ class KeywordApp(QMainWindow):
     def on_update_error(self, error_message):
         self.log_message("WARNING", f"버전 확인 중 오류 발생: {error_message}")
 
+    def closeEvent(self, event):
+        if self.auth_process and self.auth_process.is_alive():
+            self.auth_process.terminate()
+        event.accept()
+
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+    freeze_support()
+
     app = QApplication(sys.argv)
     window = KeywordApp()
     window.show()
