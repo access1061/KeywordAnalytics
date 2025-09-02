@@ -10,3 +10,7 @@ pip install -r requirements.txt
 python -m venv venv
 
 venv\Scripts\activate
+
+
+2.0 ver (api 저장기능 포함) 빌드 명령어
+pyinstaller KeywordAnalyzerPro.spec

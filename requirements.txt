@@ -6,3 +6,4 @@ selenium
 webdriver-manager
 XlsxWriter
 update-checker
+cryptography>=42.0.0

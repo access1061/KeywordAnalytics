@@ -5,16 +5,12 @@ import json
 import hashlib
 import hmac
 import base64
-import uuid # 암호화 키 생성을 위해 추가
-import configparser # INI 파일 관리를 위해 추가
-from cryptography.fernet import Fernet # 암호화/복호화를 위해 추가
-import webbrowser
+import webbrowser  # 네이버 링크 오픈용 브라우저 기능추가 8.20
 from datetime import datetime, timedelta
 from urllib.parse import quote
 import pandas as pd
 import requests
-# [수정] dotenv load_dotenv 제거
-# from dotenv import load_dotenv
+from dotenv import load_dotenv
 import xml.etree.ElementTree as ET
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
@@ -39,98 +35,9 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QLineEdit,
     QCheckBox,
-    QDialog,          # [추가] 설정창 UI
-    QFormLayout,      # [추가] 설정창 UI
-    QDialogButtonBox, # [추가] 설정창 UI
 )
 from PyQt6.QtGui import QIcon, QColor
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
-
-# --- [신규] 설정 및 암호화 관리 클래스 ---
-class SettingsManager:
-    """INI 파일에서 API 설정을 안전하게 읽고 쓰는 클래스"""
-    def __init__(self, path="config.ini"):
-        self.path = path
-        self.config = configparser.ConfigParser()
-        # PC의 MAC 주소를 기반으로 고유한 암호화 키 생성
-        key_material = str(uuid.getnode()).encode()
-        salt = b'some_fixed_salt_for_app' # 키 강화용 고정 솔트
-        hashed_key = hashlib.sha256(salt + key_material).digest()
-        self.fernet_key = base64.urlsafe_b64encode(hashed_key[:32])
-        self.cipher = Fernet(self.fernet_key)
-
-    def encrypt(self, data: str) -> str:
-        """문자열을 암호화합니다."""
-        if not data:
-            return ""
-        return self.cipher.encrypt(data.encode('utf-8')).decode('utf-8')
-
-    def decrypt(self, token: str) -> str:
-        """암호화된 토큰을 복호화합니다."""
-        if not token:
-            return ""
-        try:
-            return self.cipher.decrypt(token.encode('utf-8')).decode('utf-8')
-        except Exception:
-            # 복호화 실패 시 (예: 파일 손상, 다른 PC에서 파일 이동)
-            return ""
-
-    def save_settings(self, settings: dict):
-        """설정 사전을 받아 INI 파일에 암호화하여 저장합니다."""
-        self.config['API'] = {key: self.encrypt(value) for key, value in settings.items()}
-        with open(self.path, 'w', encoding='utf-8') as configfile:
-            self.config.write(configfile)
-
-    def load_settings(self) -> dict:
-        """INI 파일에서 설정을 읽어 복호화한 후 사전으로 반환합니다."""
-        try:
-            self.config.read(self.path, encoding='utf-8')
-            if 'API' in self.config:
-                return {key: self.decrypt(value) for key, value in self.config['API'].items()}
-        except (configparser.Error, FileNotFoundError):
-            pass # 파일이 없거나 손상된 경우 빈 사전 반환
-        return {}
-
-
-# --- [신규] API 설정 다이얼로그 UI ---
-class SettingsDialog(QDialog):
-    def __init__(self, current_settings: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("API 키 설정")
-        self.setMinimumSize(500, 250)
-
-        # 각 API 키에 대한 입력 필드 생성
-        self.naver_ads_key = QLineEdit(current_settings.get("naver_ads_api_key", ""))
-        self.naver_ads_secret = QLineEdit(current_settings.get("naver_ads_api_secret", ""))
-        self.naver_ads_secret.setEchoMode(QLineEdit.EchoMode.Password) # 비밀번호처럼 보이게 처리
-        self.naver_ads_customer_id = QLineEdit(current_settings.get("naver_ads_customer_id", ""))
-        self.naver_search_id = QLineEdit(current_settings.get("naver_search_client_id", ""))
-        self.naver_search_secret = QLineEdit(current_settings.get("naver_search_client_secret", ""))
-        self.naver_search_secret.setEchoMode(QLineEdit.EchoMode.Password) # 비밀번호처럼 보이게 처리
-
-        # UI 레이아웃 설정
-        layout = QFormLayout(self)
-        layout.addRow("네이버 광고 API Key:", self.naver_ads_key)
-        layout.addRow("네이버 광고 API Secret:", self.naver_ads_secret)
-        layout.addRow("네이버 광고 Customer ID:", self.naver_ads_customer_id)
-        layout.addRow("네이버 검색 API Client ID:", self.naver_search_id)
-        layout.addRow("네이버 검색 API Client Secret:", self.naver_search_secret)
-
-        # 저장/취소 버튼 추가
-        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.button_box.accepted.connect(self.accept)
-        self.button_box.rejected.connect(self.reject)
-        layout.addRow(self.button_box)
-
-    def get_settings(self) -> dict:
-        """입력 필드의 값들을 사전 형태로 반환합니다."""
-        return {
-            "naver_ads_api_key": self.naver_ads_key.text().strip(),
-            "naver_ads_api_secret": self.naver_ads_secret.text().strip(),
-            "naver_ads_customer_id": self.naver_ads_customer_id.text().strip(),
-            "naver_search_client_id": self.naver_search_id.text().strip(),
-            "naver_search_client_secret": self.naver_search_secret.text().strip(),
-        }
 
 
 # --- PyInstaller를 위한 리소스 경로 설정 함수 ---
@@ -139,13 +46,18 @@ def resource_path(relative_path):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
+
+# === [수정] STYLESHEET 변수 제거 및 파일 읽기 함수로 대체 ===
+
+
 # 스타일시트 파일을 읽어오는 함수
 def load_stylesheet():
     try:
         with open(resource_path("style.qss"), "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        return ""
+        return ""  # 파일이 없을 경우 빈 문자열 반환
+
 
 # --- API 관련 헬퍼 클래스 및 함수 ---
 class Signature:
@@ -157,6 +69,7 @@ class Signature:
         )
         return base64.b64encode(hash_val.digest())
 
+
 def load_cookies_from_auth_file(path="auth.json"):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -165,16 +78,19 @@ def load_cookies_from_auth_file(path="auth.json"):
     except FileNotFoundError:
         return None
 
+
 def get_naver_ad_keywords(
     keyword: str, api_key: str, secret_key: str, customer_id: str
 ):
     if not all([api_key, secret_key, customer_id]):
-        raise ValueError("광고 API 키가 없습니다. 'API 설정'에서 키를 입력해주세요.")
+        raise ValueError("광고 API 키가 없습니다.")
 
     signature_generator = Signature()
     base_url, uri, method = "https://api.searchad.naver.com", "/keywordstool", "GET"
+
     timestamp = str(round(time.time() * 1000))
     signature = signature_generator.generate(timestamp, method, uri, secret_key)
+
     headers = {
         "Content-Type": "application/json; charset=UTF-8",
         "X-Timestamp": timestamp,
@@ -182,14 +98,17 @@ def get_naver_ad_keywords(
         "X-Customer": str(customer_id),
         "X-Signature": signature,
     }
+
+    # [수정] 이 함수는 이미 공백을 제거하고 있었으므로 그대로 둡니다.
     params = {"hintKeywords": keyword.replace(" ", ""), "showDetail": "1"}
     r = requests.get(base_url + uri, params=params, headers=headers, timeout=10)
     r.raise_for_status()
     return r.json().get("keywordList", [])
 
+
 def get_blog_post_count(keyword: str, client_id: str, client_secret: str):
     if not all([client_id, client_secret]):
-        raise ValueError("검색 API 키가 없습니다. 'API 설정'에서 키를 입력해주세요.")
+        raise ValueError("검색 API 키가 없습니다.")
 
     url = f"https://openapi.naver.com/v1/search/blog?query={quote(keyword)}"
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
@@ -197,6 +116,8 @@ def get_blog_post_count(keyword: str, client_id: str, client_secret: str):
     response.raise_for_status()
     return response.json().get("total", 0)
 
+
+# [수정] Worker 클래스에서 중단 관련 로직 모두 제거
 class Worker(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -215,7 +136,9 @@ class Worker(QObject):
             self.finished.emit(result)
         except Exception as e:
             import traceback
+
             self.error.emit(f"{e}\n{traceback.format_exc()}")
+
 
 class KeywordApp(QMainWindow):
     NAVER_TRENDS_API_URL = "https://creator-advisor.naver.com/api/v6/trend/category"
@@ -225,20 +148,53 @@ class KeywordApp(QMainWindow):
     AC_GOOGLE_URL = "https://suggestqueries.google.com/complete/search?client=firefox&output=json&q="
     AC_DAUM_URL = "https://suggest.search.daum.net/sushi/opensearch/pc?q="
     CATEGORIES = [
-        "맛집","국내여행","세계여행","비즈니스·경제","패션·미용","상품리뷰","일상·생각","건강·의학","육아·결혼","요리·레시피",
-        "IT·컴퓨터","교육·학문","자동차","인테리어·DIY","스포츠","취미","방송","게임","스타·연예인","영화","공연·전시",
-        "반려동물","사회·정치","드라마","어학·외국어","문학·책","음악","만화·애니","좋은글·이미지","미술·디자인","원예·재배","사진",
+        "맛집",
+        "국내여행",
+        "세계여행",
+        "비즈니스·경제",
+        "패션·미용",
+        "상품리뷰",
+        "일상·생각",
+        "건강·의학",
+        "육아·결혼",
+        "요리·레시피",
+        "IT·컴퓨터",
+        "교육·학문",
+        "자동차",
+        "인테리어·DIY",
+        "스포츠",
+        "취미",
+        "방송",
+        "게임",
+        "스타·연예인",
+        "영화",
+        "공연·전시",
+        "반려동물",
+        "사회·정치",
+        "드라마",
+        "어학·외국어",
+        "문학·책",
+        "음악",
+        "만화·애니",
+        "좋은글·이미지",
+        "미술·디자인",
+        "원예·재배",
+        "사진",
     ]
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("키워드 분석기 Pro v2.0") # 버전 업데이트
+        self.setWindowTitle("키워드 분석기 Pro v1.9")
         self.setGeometry(100, 100, 1400, 800)
-        self.setStyleSheet(load_stylesheet())
+        # self.setStyleSheet(STYLESHEET)
+        self.setStyleSheet(load_stylesheet())  # 수정된 함수 호출
 
-        # --- [수정] API 키 로딩 방식 변경 ---
-        self.settings_manager = SettingsManager()
-        self.load_api_keys() # 앱 시작 시 암호화된 설정 로드
+        load_dotenv("api.env")
+        self.NAVER_ADS_API_KEY = os.getenv("NAVER_ADS_API_KEY")
+        self.NAVER_ADS_API_SECRET = os.getenv("NAVER_ADS_API_SECRET")
+        self.NAVER_ADS_CUSTOMER_ID = os.getenv("NAVER_ADS_CUSTOMER_ID")
+        self.NAVER_SEARCH_CLIENT_ID = os.getenv("NAVER_SEARCH_CLIENT_ID")
+        self.NAVER_SEARCH_CLIENT_SECRET = os.getenv("NAVER_SEARCH_CLIENT_SECRET")
 
         icon_path = resource_path("keyword_pro.ico")
         if os.path.exists(icon_path):
@@ -270,68 +226,35 @@ class KeywordApp(QMainWindow):
         log_layout.addWidget(self.log_widget)
         main_content_layout.addWidget(log_container, 1)
 
+        # [탭만드는 부분]
         self.create_trend_fetch_tab()
         self.create_analysis_tab()
         self.create_autocomplete_tab()
-        self.create_naver_main_tab()
-        
-        # 앱 시작 시 API 키 존재 여부 확인 후 로그 메시지 표시
-        if self.NAVER_ADS_API_KEY and self.NAVER_SEARCH_CLIENT_ID:
-            self.log_message("INFO", "프로그램이 시작되었습니다. 암호화된 API 키를 성공적으로 로드했습니다.")
+        self.create_naver_main_tab()  # [수정] 이 줄을 추가해주세요.
+
+        if self.NAVER_ADS_API_KEY:
+            self.log_message(
+                "INFO", "프로그램이 시작되었습니다. API 키를 로드했습니다."
+            )
         else:
-            self.log_message("WARNING", "API 키가 없습니다. [API 설정] 버튼을 눌러 키를 입력해주세요.")
-
-
-    # --- [신규] API 키 로드 메서드 ---
-    def load_api_keys(self):
-        """SettingsManager를 통해 암호화된 API 키를 로드하여 멤버 변수에 할당합니다."""
-        settings = self.settings_manager.load_settings()
-        self.NAVER_ADS_API_KEY = settings.get("naver_ads_api_key")
-        self.NAVER_ADS_API_SECRET = settings.get("naver_ads_api_secret")
-        self.NAVER_ADS_CUSTOMER_ID = settings.get("naver_ads_customer_id")
-        self.NAVER_SEARCH_CLIENT_ID = settings.get("naver_search_client_id")
-        self.NAVER_SEARCH_CLIENT_SECRET = settings.get("naver_search_client_secret")
-        
-        # 현재 로드된 키를 추적하기 위한 변수 (설정창에 기존 값 표시용)
-        self.current_api_settings = settings
-
+            self.log_message(
+                "WARNING", "api.env 파일을 찾을 수 없습니다. API 키를 로드해주세요."
+            )
 
     def create_settings_bar(self, parent_layout):
         settings_frame = QWidget()
         settings_layout = QHBoxLayout(settings_frame)
         settings_layout.setContentsMargins(0, 0, 0, 0)
-        
         self.reset_button = QPushButton("화면 초기화")
         self.reset_button.setObjectName("ResetButton")
         self.reset_button.clicked.connect(self.reset_ui)
-        
         self.auth_button = QPushButton("인증 정보 갱신 (로그인)")
         self.auth_button.setObjectName("AuthButton")
         self.auth_button.clicked.connect(self.start_auth_regeneration)
-        
-        # --- [신규] API 설정 버튼 추가 ---
-        self.settings_button = QPushButton("API 설정")
-        self.settings_button.setObjectName("SettingsButton") # 필요 시 style.qss에 스타일 추가
-        self.settings_button.clicked.connect(self.open_settings_dialog)
-        
         settings_layout.addStretch()
         settings_layout.addWidget(self.reset_button)
         settings_layout.addWidget(self.auth_button)
-        settings_layout.addWidget(self.settings_button) # 레이아웃에 버튼 추가
         parent_layout.addWidget(settings_frame)
-
-    # --- [신규] 설정창 열기 메서드 ---
-    def open_settings_dialog(self):
-        """API 키를 입력하고 저장하는 설정창을 엽니다."""
-        dialog = SettingsDialog(self.current_api_settings, self)
-        # 사용자가 'OK' 버튼을 누르면
-        if dialog.exec():
-            new_settings = dialog.get_settings()
-            self.settings_manager.save_settings(new_settings)
-            self.load_api_keys() # 변경된 키를 즉시 앱에 다시 로드
-            self.log_message("SUCCESS", "✅ API 설정이 암호화되어 안전하게 저장되었습니다.")
-            QMessageBox.information(self, "성공", "API 설정이 성공적으로 저장되었습니다.")
-
 
     def reset_ui(self):
         self.trend_table.setRowCount(0)
@@ -383,6 +306,8 @@ class KeywordApp(QMainWindow):
     def create_analysis_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
+
+        # [수정] 주의 문구를 포함하도록 placeholder 텍스트 변경
         placeholder_text = """--- 키워드를 입력하거나 붙여넣어 주세요 (한 줄에 하나씩) ---
 
 💡 '기회 지수'란?
@@ -390,28 +315,35 @@ class KeywordApp(QMainWindow):
 문서(공급) 대비 검색량(수요)이 얼마나 높은지를 나타내는 지표입니다."""
         self.analysis_input_widget = QTextEdit()
         self.analysis_input_widget.setPlaceholderText(placeholder_text)
+
         control_layout = QHBoxLayout()
         self.analyze_button = QPushButton("기회지수 분석 시작")
         self.analyze_button.setObjectName("AnalyzeButton")
+
         self.export_excel_button = QPushButton("엑셀로 저장")
         self.export_excel_button.setObjectName("ExcelButton")
         self.export_excel_button.setDisabled(True)
+
         self.progress_bar_analysis = QProgressBar()
         self.progress_bar_analysis.setFixedHeight(20)
         self.progress_bar_analysis.setTextVisible(True)
         self.progress_bar_analysis.setFormat("%p%")
+
         control_layout.addWidget(self.analyze_button)
         control_layout.addWidget(self.export_excel_button)
         control_layout.addStretch()
         control_layout.addWidget(self.progress_bar_analysis)
+
         self.result_table = QTableWidget()
         headers = ["분류", "키워드", "총검색량", "총문서수", "기회지수"]
         self.result_table.setColumnCount(len(headers))
         self.result_table.setHorizontalHeaderLabels(headers)
+
         layout.addWidget(self.analysis_input_widget, 1)
         layout.addLayout(control_layout)
         layout.addWidget(self.result_table, 3)
         self.tabs.addTab(tab, "기회지수 분석")
+
         self.analyze_button.clicked.connect(self.start_competition_analysis)
         self.export_excel_button.clicked.connect(self.export_to_excel)
 
@@ -422,7 +354,9 @@ class KeywordApp(QMainWindow):
         top_control_layout.setContentsMargins(0, 0, 0, 10)
         input_layout = QHBoxLayout()
         self.autocomplete_input = QLineEdit()
-        self.autocomplete_input.setPlaceholderText("자동완성 키워드를 검색할 단어를 입력하세요...")
+        self.autocomplete_input.setPlaceholderText(
+            "자동완성 키워드를 검색할 단어를 입력하세요..."
+        )
         input_layout.addWidget(QLabel("검색어:"), 0)
         input_layout.addWidget(self.autocomplete_input, 1)
         checkbox_layout = QHBoxLayout()
@@ -453,52 +387,79 @@ class KeywordApp(QMainWindow):
         headers = ["자동완성 키워드"]
         self.autocomplete_table.setColumnCount(len(headers))
         self.autocomplete_table.setHorizontalHeaderLabels(headers)
-        self.autocomplete_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.autocomplete_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
         layout.addLayout(top_control_layout)
         layout.addWidget(self.autocomplete_table)
         self.tabs.addTab(tab, "자동완성 키워드 수집")
         self.autocomplete_search_button.clicked.connect(self.start_autocomplete_search)
         self.autocomplete_input.returnPressed.connect(self.start_autocomplete_search)
-        self.autocomplete_copy_button.clicked.connect(self.copy_autocomplete_to_analyzer)
+        self.autocomplete_copy_button.clicked.connect(
+            self.copy_autocomplete_to_analyzer
+        )
 
+    # [추가] 네이버 메인 콘텐츠 탭 UI 생성 함수
     def create_naver_main_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
+
         control_layout = QHBoxLayout()
         self.fetch_main_content_button = QPushButton("유입콘텐츠 가져오기")
-        self.fetch_main_content_button.setObjectName("TrendButton")
+        self.fetch_main_content_button.setObjectName(
+            "TrendButton"
+        )  # 기존 스타일 재활용
+
+        # [수정] 안내 문구를 위한 QLabel 추가
         hint_label = QLabel("💡 더블클릭으로 해당 링크 이동")
         hint_label.setStyleSheet("color: #6C757D; font-size: 9pt; padding-left: 10px;")
+
         control_layout.addWidget(self.fetch_main_content_button)
         control_layout.addWidget(hint_label)
         control_layout.addStretch()
+
         self.naver_main_table = QTableWidget()
         headers = ["순위", "제목"]
         self.naver_main_table.setColumnCount(len(headers))
         self.naver_main_table.setHorizontalHeaderLabels(headers)
-        self.naver_main_table.verticalHeader().setVisible(False)
-        self.naver_main_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.naver_main_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+
+        self.naver_main_table.verticalHeader().setVisible(False)  # 중복 순위 표시 제거
+
+        self.naver_main_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.naver_main_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )
         self.naver_main_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
         layout.addLayout(control_layout)
         layout.addWidget(self.naver_main_table)
         self.tabs.addTab(tab, "네이버 메인 유입 콘텐츠")
+
+        # 시그널 연결
         self.fetch_main_content_button.clicked.connect(self.start_fetch_naver_main)
         self.naver_main_table.cellDoubleClicked.connect(self.open_browser_link)
 
+    # [수정] run_worker에서 중단 버튼 관련 로직 제거
     def run_worker(self, worker_fn, finish_slot, progress_bar=None, **kwargs):
         self.thread = QThread()
         self.worker = Worker(worker_fn, **kwargs)
         self.worker.moveToThread(self.thread)
+
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(finish_slot)
         self.worker.error.connect(self.on_worker_error)
+
         if progress_bar:
             self.worker.progress.connect(progress_bar.setValue)
+
         self.worker.log.connect(self.log_message)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
+
+        # 오류 발생 시에도 스레드 정리하도록 추가
         self.worker.error.connect(self.thread.quit)
         self.worker.error.connect(self.worker.deleteLater)
         self.thread.start()
@@ -519,12 +480,17 @@ class KeywordApp(QMainWindow):
         keywords = [kw.strip() for kw in keywords if kw.strip()]
         if not keywords:
             self.log_message("WARNING", "분석할 키워드가 입력되지 않았습니다.")
-            QMessageBox.warning(self, "경고", "분석할 키워드를 입력하거나 붙여넣어 주세요.")
+            QMessageBox.warning(
+                self, "경고", "분석할 키워드를 입력하거나 붙여넣어 주세요."
+            )
             return
+
+        # [수정] 버튼 비활성화 처리 (중단 버튼 로직 제거)
         self.analyze_button.setDisabled(True)
         self.export_excel_button.setDisabled(True)
         self.result_table.setRowCount(0)
         self.progress_bar_analysis.setValue(0)
+
         self.run_worker(
             self.analyze_competition_worker,
             self.on_analysis_finished,
@@ -543,11 +509,18 @@ class KeywordApp(QMainWindow):
             QMessageBox.warning(self, "입력 오류", "검색어를 입력해주세요.")
             return
         selected_engines = [
-            name for cb, name in [(self.cb_naver, "naver"), (self.cb_daum, "daum"), (self.cb_google, "google")]
+            name
+            for cb, name in [
+                (self.cb_naver, "naver"),
+                (self.cb_daum, "daum"),
+                (self.cb_google, "google"),
+            ]
             if cb.isChecked()
         ]
         if not selected_engines:
-            QMessageBox.warning(self, "선택 오류", "하나 이상의 검색 엔진을 선택해주세요.")
+            QMessageBox.warning(
+                self, "선택 오류", "하나 이상의 검색 엔진을 선택해주세요."
+            )
             return
         self.autocomplete_search_button.setDisabled(True)
         self.autocomplete_table.setRowCount(0)
@@ -558,6 +531,7 @@ class KeywordApp(QMainWindow):
             engines=selected_engines,
         )
 
+    # [추가] 네이버 메인 콘텐츠 API 호출 시작 함수
     def start_fetch_naver_main(self):
         self.fetch_main_content_button.setDisabled(True)
         self.log_message("INFO", "네이버 메인 유입 콘텐츠 수집을 시작합니다...")
@@ -568,204 +542,421 @@ class KeywordApp(QMainWindow):
         worker_instance.log.emit("INFO", "📈 트렌드 키워드 수집을 시작합니다...")
         cookies = load_cookies_from_auth_file()
         if not cookies:
-            raise ValueError("'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신' 버튼을 눌러주세요.")
+            raise ValueError(
+                "'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신' 버튼을 눌러주세요."
+            )
+
         now = datetime.now()
-        days_to_subtract = 2 if now.hour < 9 else 1
-        log_msg = f"현재 시간(오전 9시 {'이전' if days_to_subtract == 2 else '이후'}) 기준으로 {days_to_subtract}일 전 트렌드를 검색합니다."
-        worker_instance.log.emit("INFO", log_msg)
-        target_date_str = (now - timedelta(days=days_to_subtract)).strftime("%Y-%m-%d")
+        if now.hour < 9:
+            days_to_subtract = 2
+            worker_instance.log.emit(
+                "INFO", "현재 시간(오전 9시 이전) 기준으로 2일 전 트렌드를 검색합니다."
+            )
+        else:
+            days_to_subtract = 1
+            worker_instance.log.emit(
+                "INFO", "현재 시간(오전 9시 이후) 기준으로 1일 전 트렌드를 검색합니다."
+            )
+
+        target_date = now - timedelta(days=days_to_subtract)
+        target_date_str = target_date.strftime("%Y-%m-%d")
         worker_instance.log.emit("INFO", f"🎯 검색 대상 날짜: {target_date_str}")
+
         try:
             worker_instance.log.emit("INFO", "인증 정보 유효성을 확인합니다...")
-            test_api_url = f"{self.NAVER_TRENDS_API_URL}?categories={quote(self.CATEGORIES[0])}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=1&service=naver_blog"
-            response = requests.get(test_api_url, cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"}, timeout=10)
+            test_category = self.CATEGORIES[0]
+            test_api_url = f"{self.NAVER_TRENDS_API_URL}?categories={quote(test_category)}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=1&service=naver_blog"
+
+            response = requests.get(
+                test_api_url,
+                cookies=cookies,
+                headers={"Referer": "https://creator-advisor.naver.com/"},
+                timeout=10,
+            )
+
             if response.status_code != 200:
-                raise ValueError(f"인증 확인 실패 (HTTP {response.status_code}). '인증 정보 갱신'이 필요할 수 있습니다.")
-            data = response.json()
+                raise ValueError(
+                    f"인증 확인 실패 (HTTP {response.status_code}). '인증 정보 갱신'이 필요할 수 있습니다."
+                )
+
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                raise ValueError(
+                    "인증 정보가 유효하지 않습니다 (API 응답이 올바르지 않음). '인증 정보 갱신'을 해주세요."
+                )
+
             if "data" not in data:
-                raise ValueError(f"API 응답 구조가 예상과 다릅니다. 서버 응답: {data.get('message', '알 수 없음')}")
+                error_message = data.get("message", "알 수 없는 API 구조")
+                raise ValueError(
+                    f"API 응답 구조가 예상과 다릅니다. 서버 응답: {error_message}"
+                )
+
         except requests.RequestException as e:
             raise ConnectionError(f"인증 확인 중 네트워크 오류가 발생했습니다: {e}")
-        except json.JSONDecodeError:
-            raise ValueError("인증 정보가 유효하지 않습니다. '인증 정보 갱신'을 해주세요.")
+
         worker_instance.log.emit("SUCCESS", "✅ 인증 정보가 유효합니다.")
+
         all_trends_data = []
         for i, category in enumerate(self.CATEGORIES):
             worker_instance.log.emit("INFO", f"   - '{category}' 카테고리 수집 중...")
             worker_instance.progress.emit(int((i + 1) / len(self.CATEGORIES) * 100))
             api_url = f"{self.NAVER_TRENDS_API_URL}?categories={quote(category)}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=20&service=naver_blog"
             try:
-                response = requests.get(api_url, cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"})
-                if response.status_code == 200 and (data := response.json()).get("data") and data["data"] and data["data"][0].get("queryList"):
+                response = requests.get(
+                    api_url,
+                    cookies=cookies,
+                    headers={"Referer": "https://creator-advisor.naver.com/"},
+                )
+                if (
+                    response.status_code == 200
+                    and (data := response.json()).get("data")
+                    and data["data"]
+                    and data["data"][0].get("queryList")
+                ):
                     for item in data["data"][0]["queryList"]:
                         rank_change = item.get("rankChange")
                         try:
-                            rank_change = int(rank_change) if rank_change is not None else None
-                        except (ValueError, TypeError): rank_change = None
-                        all_trends_data.append({"카테고리": category, "키워드": item.get("query", "N/A"), "순위변동": rank_change})
-                else: worker_instance.log.emit("WARNING", f"   - '{category}' 카테고리 요청 실패 (상태 코드: {response.status_code})")
+                            if rank_change is not None:
+                                rank_change = int(rank_change)
+                        except (ValueError, TypeError):
+                            rank_change = None
+                        all_trends_data.append(
+                            {
+                                "카테고리": category,
+                                "키워드": item.get("query", "N/A"),
+                                "순위변동": rank_change,
+                            }
+                        )
+                else:
+                    worker_instance.log.emit(
+                        "WARNING",
+                        f"   - '{category}' 카테고리 요청 실패 (상태 코드: {response.status_code})",
+                    )
                 time.sleep(0.3)
-            except Exception as e: worker_instance.log.emit("ERROR", f"   - '{category}' 처리 중 오류: {e}")
+            except Exception as e:
+                worker_instance.log.emit(
+                    "ERROR", f"   - '{category}' 처리 중 오류: {e}"
+                )
         return all_trends_data
 
+    # [수정] 키워드 공백 제거 로직 및 관련 로직 강화
     def analyze_competition_worker(self, worker_instance, keywords):
-        worker_instance.log.emit("INFO", "🔬 키워드 기회지수 분석을 시작합니다 (0.15초 간격)...")
-        unique_keywords = list(dict.fromkeys(keywords))
-        analysis_results = []
-        total = len(unique_keywords)
-        worker_instance.log.emit("INFO", f"중복 제거 후 {total}개의 키워드를 분석합니다.")
+        worker_instance.log.emit(
+            "INFO", "🔬 키워드 기회지수 분석을 시작합니다 (0.15초 간격)..."
+        )
+        unique_keywords, analysis_results, total = (
+            list(dict.fromkeys(keywords)),
+            [],
+            len(list(dict.fromkeys(keywords))),
+        )
+        worker_instance.log.emit(
+            "INFO", f"중복 제거 후 {total}개의 키워드를 분석합니다."
+        )
+
         for i, original_keyword in enumerate(unique_keywords):
             worker_instance.progress.emit(int((i + 1) / total * 100))
+
+            # [추가] 공란 제거 로직. 원본 키워드는 표시용으로 유지.
             keyword_for_api = original_keyword.replace(" ", "")
-            if not keyword_for_api:
-                worker_instance.log.emit("WARNING", f"'{original_keyword}'는 공백만 있어 분석에서 제외됩니다.")
+            if not keyword_for_api:  # 공란 제거 후 빈 문자열이 되면 건너뛰기
+                worker_instance.log.emit(
+                    "WARNING",
+                    f"'{original_keyword}'는 공백만 있어 분석에서 제외됩니다.",
+                )
                 continue
-            worker_instance.log.emit("INFO", f"({i+1}/{total}) '{original_keyword}' (API 조회: '{keyword_for_api}') 분석 중...")
+
+            worker_instance.log.emit(
+                "INFO",
+                f"({i+1}/{total}) '{original_keyword}' (API 조회: '{keyword_for_api}') 분석 중...",
+            )
             try:
-                ad_api_data = get_naver_ad_keywords(keyword_for_api, self.NAVER_ADS_API_KEY, self.NAVER_ADS_API_SECRET, self.NAVER_ADS_CUSTOMER_ID)
-                post_count = get_blog_post_count(keyword_for_api, self.NAVER_SEARCH_CLIENT_ID, self.NAVER_SEARCH_CLIENT_SECRET)
+                # [수정] 모든 API 호출 시 공백 없는 키워드 사용
+                ad_api_data = get_naver_ad_keywords(
+                    keyword_for_api,
+                    self.NAVER_ADS_API_KEY,
+                    self.NAVER_ADS_API_SECRET,
+                    self.NAVER_ADS_CUSTOMER_ID,
+                )
+                post_count = get_blog_post_count(
+                    keyword_for_api,
+                    self.NAVER_SEARCH_CLIENT_ID,
+                    self.NAVER_SEARCH_CLIENT_SECRET,
+                )
+
                 pc_search, mobile_search = 0, 0
-                if ad_api_data and (exact_match := next((item for item in ad_api_data if item["relKeyword"] == keyword_for_api), None)):
-                    pc_count_str, mobile_count_str = str(exact_match.get("monthlyPcQcCnt", 0)), str(exact_match.get("monthlyMobileQcCnt", 0))
+                # [수정] API 결과에서도 공백 없는 키워드로 정확히 매칭
+                if ad_api_data and (
+                    exact_match := next(
+                        (
+                            item
+                            for item in ad_api_data
+                            if item["relKeyword"] == keyword_for_api
+                        ),
+                        None,
+                    )
+                ):
+                    pc_count_str = str(exact_match.get("monthlyPcQcCnt", 0))
+                    mobile_count_str = str(exact_match.get("monthlyMobileQcCnt", 0))
                     pc_search = 5 if "<" in pc_count_str else int(pc_count_str)
-                    mobile_search = 5 if "<" in mobile_count_str else int(mobile_count_str)
+                    mobile_search = (
+                        5 if "<" in mobile_count_str else int(mobile_count_str)
+                    )
+
                 total_search = pc_search + mobile_search
-                opportunity_index_float = (total_search / post_count) if post_count > 0 else 0
+                opportunity_index_float = (
+                    (total_search / post_count) if post_count > 0 else 0
+                )
+
                 category = "일반"
-                if opportunity_index_float >= 0.2: category = "🏆 황금"
-                elif opportunity_index_float >= 0.05 and total_search >= 1000: category = "✨ 매력"
-                analysis_results.append({"분류": category, "키워드": original_keyword, "총검색량": total_search, "총문서수": post_count, "기회지수": round(opportunity_index_float, 2)})
+                if opportunity_index_float >= 0.2:
+                    category = "🏆 황금"
+                elif opportunity_index_float >= 0.05 and total_search >= 1000:
+                    category = "✨ 매력"
+
+                # [수정] 결과에는 원본 키워드를 저장하여 표시
+                analysis_results.append(
+                    {
+                        "분류": category,
+                        "키워드": original_keyword,
+                        "총검색량": total_search,
+                        "총문서수": post_count,
+                        "기회지수": round(opportunity_index_float, 2),
+                    }
+                )
             except Exception as e:
-                worker_instance.log.emit("ERROR", f"'{original_keyword}' 분석 중 오류 발생: {e}")
+                worker_instance.log.emit(
+                    "ERROR", f"'{original_keyword}' 분석 중 오류 발생: {e}"
+                )
             time.sleep(0.15)
         return pd.DataFrame(analysis_results)
 
+    # [추가] 네이버 메인 유입 콘텐츠 수집 워커 함수
     def fetch_naver_main_worker(self, worker_instance):
         worker_instance.log.emit("INFO", "네이버 메인 유입 콘텐츠 API를 호출합니다...")
+
         cookies = load_cookies_from_auth_file()
-        if not cookies: raise ValueError("'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신'을 먼저 실행해주세요.")
-        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        api_url = "https://creator-advisor.naver.com/api/v6/trend/main-inflow-content-ranks"
+        if not cookies:
+            raise ValueError(
+                "'auth.json' 파일을 찾을 수 없습니다. '인증 정보 갱신'을 먼저 실행해주세요."
+            )
+
+        yesterday = datetime.now() - timedelta(days=1)
+        yesterday_str = yesterday.strftime("%Y-%m-%d")
+
+        base_url = "https://creator-advisor.naver.com"
+        api_path = "/api/v6/trend/main-inflow-content-ranks"
         params = {"service": "naver_blog", "date": yesterday_str, "interval": "day"}
+        api_url = f"{base_url}{api_path}"
+
         results = []
         try:
-            response = requests.get(api_url, params=params, cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"}, timeout=10)
-            response.raise_for_status()
+            response = requests.get(
+                api_url,
+                params=params,
+                cookies=cookies,
+                headers={"Referer": "https://creator-advisor.naver.com/"},
+                timeout=10,
+            )
+            response.raise_for_status()  # HTTP 오류가 있으면 예외 발생
+
             data = response.json().get("data", [])
+
             for i, item in enumerate(data, start=1):
-                results.append({"rank": str(i), "title": item.get("title"), "link": item.get("url")})
-            worker_instance.log.emit("SUCCESS", f"API로부터 {len(results)}개의 인기 콘텐츠를 가져왔습니다.")
+                results.append(
+                    {
+                        "rank": str(i),
+                        "title": item.get("title"),
+                        "link": item.get("url"),
+                    }
+                )
+
+            worker_instance.log.emit(
+                "SUCCESS", f"API로부터 {len(results)}개의 인기 콘텐츠를 가져왔습니다."
+            )
             return results
+
+        # [수정] 401 인증 오류를 별도로 처리하는 로직 추가
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 401:
-                raise ValueError("인증 확인 실패 (HTTP 401). '인증 정보 갱신'이 필요할 수 있습니다.")
-            worker_instance.log.emit("ERROR", f"네이버 메인 콘텐츠 API 호출 중 HTTP 오류: {e}")
-            raise e
+                # 401 오류 발생 시, 트렌드 키워드와 동일한 사용자 친화적 메시지를 발생시킴
+                raise ValueError(
+                    "인증 확인 실패 (HTTP 401). '인증 정보 갱신'이 필요할 수 있습니다."
+                )
+            else:
+                # 다른 HTTP 오류는 기존처럼 처리
+                worker_instance.log.emit(
+                    "ERROR", f"네이버 메인 콘텐츠 API 호출 중 HTTP 오류: {e}"
+                )
+                raise e
         except Exception as e:
-            worker_instance.log.emit("ERROR", f"네이버 메인 콘텐츠 API 호출 중 오류: {e}")
+            worker_instance.log.emit(
+                "ERROR", f"네이버 메인 콘텐츠 API 호출 중 오류: {e}"
+            )
             raise e
 
     def save_auth_logic(self, worker_instance):
         worker_instance.log.emit("INFO", "🔒 인증 정보 갱신을 시작합니다...")
-        worker_instance.log.emit("WARNING", "새로운 크롬 창에서 네이버 로그인을 직접 진행해주세요.")
-        driver = None
+        worker_instance.log.emit(
+            "WARNING", "새로운 크롬 창에서 네이버 로그인을 직접 진행해주세요."
+        )
+
+        # For stability during deployment (PyInstaller), it's recommended to
+        # include chromedriver.exe in the project folder and specify the path directly.
+        # Example: service = ChromeService(executable_path=resource_path("chromedriver.exe"))
+
+        driver = None  # Ensure driver is defined for the finally block
         try:
             service = ChromeService(ChromeDriverManager().install())
             options = webdriver.ChromeOptions()
             driver = webdriver.Chrome(service=service, options=options)
+
             driver.get("https://nid.naver.com/nidlogin.login")
-            worker_instance.log.emit("INFO", "로그인 페이지가 열렸습니다. 로그인이 완료될 때까지 대기합니다...")
-            WebDriverWait(driver, 300).until(lambda d: "nid.naver.com" not in d.current_url)
-            worker_instance.log.emit("INFO", "로그인이 감지되었습니다. 쿠키를 저장합니다...")
+            worker_instance.log.emit(
+                "INFO",
+                "로그인 페이지가 열렸습니다. 로그인이 완료될 때까지 대기합니다...",
+            )
+            WebDriverWait(driver, 300).until(
+                lambda d: "nid.naver.com" not in d.current_url
+            )
+            worker_instance.log.emit(
+                "INFO", "로그인이 감지되었습니다. 쿠키를 저장합니다..."
+            )
             storage_state = {"cookies": driver.get_cookies()}
             with open("auth.json", "w", encoding="utf-8") as f:
                 json.dump(storage_state, f, ensure_ascii=False, indent=4)
             return "✅ 인증 정보(auth.json)가 성공적으로 갱신되었습니다!"
         except Exception as e:
             import traceback
+
             error_msg = f"인증 절차 중 오류 발생: {e}\n{traceback.format_exc()}"
             worker_instance.log.emit("ERROR", error_msg)
-            raise e
+            raise e  # Re-raise the exception to be caught by the worker's error handler
         finally:
-            if driver: driver.quit()
+            if driver:
+                driver.quit()
 
     def _fetch_naver_autocomplete(self, worker_instance, keyword, all_results):
         try:
             worker_instance.log.emit("INFO", "  - 네이버 검색 중...")
-            resp = requests.get(self.AC_NAVER_URL + quote(keyword), headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            url = self.AC_NAVER_URL + quote(keyword)
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
             resp.raise_for_status()
             data = resp.json()
-            if isinstance(data, dict) and (items := data.get("items")) and isinstance(items, list) and len(items) > 0:
+            if (
+                isinstance(data, dict)
+                and (items := data.get("items"))
+                and isinstance(items, list)
+                and len(items) > 0
+            ):
                 for item in items[0]:
-                    if isinstance(item, list) and len(item) > 0 and isinstance(item[0], str):
+                    if (
+                        isinstance(item, list)
+                        and len(item) > 0
+                        and isinstance(item[0], str)
+                    ):
                         all_results.add(item[0])
             worker_instance.log.emit("SUCCESS", "  - 네이버 검색 완료.")
-        except Exception as e: worker_instance.log.emit("ERROR", f"  - 네이버 자동완성 검색 실패: {e}")
+        except Exception as e:
+            worker_instance.log.emit("ERROR", f"  - 네이버 자동완성 검색 실패: {e}")
 
     def _fetch_daum_autocomplete(self, worker_instance, keyword, all_results):
         try:
             worker_instance.log.emit("INFO", "  - Daum 검색 중...")
-            resp = requests.get(self.AC_DAUM_URL + quote(keyword), headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            url = self.AC_DAUM_URL + quote(keyword)
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            content_text = resp.text
             if "json" in resp.headers.get("Content-Type", "").lower():
-                data = json.loads(resp.text)
+                data = json.loads(content_text)
                 if isinstance(data, list) and len(data) > 1:
-                    for item in data[1]: all_results.add(item.strip())
-                elif isinstance(data, dict) and (items := data.get("items", {}).get("s")):
+                    for item in data[1]:
+                        all_results.add(item.strip())
+                elif isinstance(data, dict) and (
+                    items := data.get("items", {}).get("s")
+                ):
                     for item in items:
-                        if len(item) > 1: all_results.add(item[1])
+                        if len(item) > 1:
+                            all_results.add(item[1])
             else:
                 root = ET.fromstring(resp.content)
                 for item in root.findall(".//item/keyword"):
-                    if item.text: all_results.add(item.text.strip())
+                    if item.text:
+                        all_results.add(item.text.strip())
             worker_instance.log.emit("SUCCESS", "  - Daum 검색 완료.")
-        except Exception as e: worker_instance.log.emit("ERROR", f"  - Daum 자동완성 검색 실패: {e}")
+        except Exception as e:
+            worker_instance.log.emit("ERROR", f"  - Daum 자동완성 검색 실패: {e}")
 
     def _fetch_google_autocomplete(self, worker_instance, keyword, all_results):
         try:
             worker_instance.log.emit("INFO", "  - Google 검색 중...")
-            resp = requests.get(self.AC_GOOGLE_URL + quote(keyword), headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            url = self.AC_GOOGLE_URL + quote(keyword)
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
             data = resp.json()
             if isinstance(data, list) and len(data) > 1:
-                for item in data[1]: all_results.add(item.strip())
+                for item in data[1]:
+                    all_results.add(item.strip())
             worker_instance.log.emit("SUCCESS", "  - Google 검색 완료.")
-        except Exception as e: worker_instance.log.emit("ERROR", f"  - Google 자동완성 검색 실패: {e}")
+        except Exception as e:
+            worker_instance.log.emit("ERROR", f"  - Google 자동완성 검색 실패: {e}")
 
     def autocomplete_worker(self, worker_instance, keyword, engines):
-        worker_instance.log.emit("INFO", f"'{keyword}' 자동완성 키워드 검색 시작 (대상: {', '.join(engines)})")
+        worker_instance.log.emit(
+            "INFO",
+            f"'{keyword}' 자동완성 키워드 검색 시작 (대상: {', '.join(engines)})",
+        )
         all_results = set()
-        if "naver" in engines: self._fetch_naver_autocomplete(worker_instance, keyword, all_results)
-        if "daum" in engines: self._fetch_daum_autocomplete(worker_instance, keyword, all_results)
-        if "google" in engines: self._fetch_google_autocomplete(worker_instance, keyword, all_results)
-        worker_instance.log.emit("SUCCESS", f"✅ 총 {len(all_results)}개의 키워드를 찾았습니다.")
+        if "naver" in engines:
+            self._fetch_naver_autocomplete(worker_instance, keyword, all_results)
+        if "daum" in engines:
+            self._fetch_daum_autocomplete(worker_instance, keyword, all_results)
+        if "google" in engines:
+            self._fetch_google_autocomplete(worker_instance, keyword, all_results)
+        worker_instance.log.emit(
+            "SUCCESS", f"✅ 총 {len(all_results)}개의 키워드를 찾았습니다."
+        )
         return sorted(list(all_results))
 
     def on_trend_fetching_finished(self, trend_data):
         self.fetch_trends_button.setDisabled(False)
         self.progress_bar_fetch.setValue(100)
-        self.status_label_fetch.setText(f"✅ {len(trend_data)}개 트렌드 키워드 수집 완료!")
+        self.status_label_fetch.setText(
+            f"✅ {len(trend_data)}개 트렌드 키워드 수집 완료!"
+        )
         self.log_message("SUCCESS", "트렌드 키워드 수집이 완료되었습니다.")
         self.trend_table.setRowCount(len(trend_data))
         for row_idx, item in enumerate(trend_data):
-            category_item, keyword_item = QTableWidgetItem(str(item["카테고리"])), QTableWidgetItem(str(item["키워드"]))
+            category_item, keyword_item = QTableWidgetItem(
+                str(item["카테고리"])
+            ), QTableWidgetItem(str(item["키워드"]))
             rank_change = item["순위변동"]
-            rank_text = "NEW" if rank_change is None else ("-" if rank_change == 0 else f"{rank_change:g}")
+            rank_text = (
+                "NEW"
+                if rank_change is None
+                else ("-" if rank_change == 0 else f"{rank_change:g}")
+            )
             rank_item = QTableWidgetItem(rank_text)
             rank_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if rank_change is None: rank_item.setForeground(QColor("#28A745"))
-            elif rank_change > 0: rank_item.setForeground(QColor("#DC3545"))
-            elif rank_change < 0: rank_item.setForeground(QColor("#007BFF"))
+            if rank_change is None:
+                rank_item.setForeground(QColor("#28A745"))
+            elif rank_change > 0:
+                rank_item.setForeground(QColor("#DC3545"))
+            elif rank_change < 0:
+                rank_item.setForeground(QColor("#007BFF"))
             self.trend_table.setItem(row_idx, 0, category_item)
             self.trend_table.setItem(row_idx, 1, keyword_item)
             self.trend_table.setItem(row_idx, 2, rank_item)
         self.trend_table.resizeColumnsToContents()
 
     def on_analysis_finished(self, df):
+        # [수정] 버튼 활성화 처리 (중단 버튼 로직 제거)
         self.analyze_button.setDisabled(False)
         if df is not None and not df.empty:
             self.results_df = df.sort_values(by="기회지수", ascending=False)
             self.update_result_table(self.results_df)
             self.export_excel_button.setDisabled(False)
-            self.log_message("SUCCESS", "🎉 모든 키워드의 기회지수 분석이 완료되었습니다.")
+            self.log_message(
+                "SUCCESS", "🎉 모든 키워드의 기회지수 분석이 완료되었습니다."
+            )
         else:
             self.log_message("WARNING", "분석된 결과가 없습니다.")
         self.progress_bar_analysis.setValue(100)
@@ -778,18 +969,23 @@ class KeywordApp(QMainWindow):
         self.autocomplete_search_button.setDisabled(False)
         self.log_message("SUCCESS", "자동완성 키워드 수집이 완료되었습니다.")
 
+    # [추가] 네이버 메인 콘텐츠 수집 완료 후 테이블 채우는 함수
     def on_naver_main_finished(self, results):
         self.fetch_main_content_button.setDisabled(False)
         self.naver_main_table.setRowCount(len(results))
         for row_idx, item in enumerate(results):
             rank_item = QTableWidgetItem(item["rank"])
+
+            # [수정] 순위 아이템을 가운데 정렬합니다.
             rank_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
             title_item = QTableWidgetItem(item["title"])
             title_item.setData(Qt.ItemDataRole.UserRole, item["link"])
             self.naver_main_table.setItem(row_idx, 0, rank_item)
             self.naver_main_table.setItem(row_idx, 1, title_item)
         self.log_message("SUCCESS", "네이버 메인 유입 콘텐츠 업데이트 완료.")
 
+    # [추가] 테이블 셀 더블클릭 시 브라우저 여는 함수
     def open_browser_link(self, row, column):
         if column == 1:
             item = self.naver_main_table.item(row, column)
@@ -810,28 +1006,38 @@ class KeywordApp(QMainWindow):
         self.analyze_button.setDisabled(False)
         self.auth_button.setDisabled(False)
         self.autocomplete_search_button.setDisabled(False)
-        self.fetch_main_content_button.setDisabled(False)
+        self.fetch_main_content_button.setDisabled(
+            False
+        )  # [추가] 네이버 메인 콘텐츠 버튼 활성화
 
     def copy_trends_to_analyzer(self):
         if (rows := self.trend_table.rowCount()) > 0:
             keywords = [self.trend_table.item(row, 1).text() for row in range(rows)]
             self.analysis_input_widget.setPlainText("\n".join(keywords))
             self.tabs.setCurrentIndex(1)
-            self.log_message("INFO", f"{len(keywords)}개 키워드를 분석 탭으로 복사했습니다.")
+            self.log_message(
+                "INFO", f"{len(keywords)}개 키워드를 분석 탭으로 복사했습니다."
+            )
         else:
             QMessageBox.information(self, "알림", "먼저 트렌드 키워드를 가져와주세요.")
 
     def copy_autocomplete_to_analyzer(self):
         if (rows := self.autocomplete_table.rowCount()) > 0:
-            keywords = [self.autocomplete_table.item(row, 0).text() for row in range(rows)]
+            keywords = [
+                self.autocomplete_table.item(row, 0).text() for row in range(rows)
+            ]
             current_text = self.analysis_input_widget.toPlainText().strip()
             new_text = "\n".join(keywords)
             final_text = f"{current_text}\n{new_text}" if current_text else new_text
             self.analysis_input_widget.setPlainText(final_text.strip())
             self.tabs.setCurrentIndex(1)
-            self.log_message("INFO", f"{len(keywords)}개 키워드를 분석 탭으로 복사했습니다.")
+            self.log_message(
+                "INFO", f"{len(keywords)}개 키워드를 분석 탭으로 복사했습니다."
+            )
         else:
-            QMessageBox.information(self, "알림", "먼저 자동완성 키워드를 검색해주세요.")
+            QMessageBox.information(
+                self, "알림", "먼저 자동완성 키워드를 검색해주세요."
+            )
 
     def update_result_table(self, df):
         self.result_table.setRowCount(len(df))
@@ -839,10 +1045,18 @@ class KeywordApp(QMainWindow):
         self.result_table.setHorizontalHeaderLabels(headers)
         for row_idx, row_data in enumerate(df.itertuples()):
             self.result_table.setItem(row_idx, 0, QTableWidgetItem(str(row_data.분류)))
-            self.result_table.setItem(row_idx, 1, QTableWidgetItem(str(row_data.키워드)))
-            self.result_table.setItem(row_idx, 2, QTableWidgetItem(f"{row_data.총검색량:,}"))
-            self.result_table.setItem(row_idx, 3, QTableWidgetItem(f"{row_data.총문서수:,}"))
-            self.result_table.setItem(row_idx, 4, QTableWidgetItem(f"{row_data.기회지수:,}"))
+            self.result_table.setItem(
+                row_idx, 1, QTableWidgetItem(str(row_data.키워드))
+            )
+            self.result_table.setItem(
+                row_idx, 2, QTableWidgetItem(f"{row_data.총검색량:,}")
+            )
+            self.result_table.setItem(
+                row_idx, 3, QTableWidgetItem(f"{row_data.총문서수:,}")
+            )
+            self.result_table.setItem(
+                row_idx, 4, QTableWidgetItem(f"{row_data.기회지수:,}")
+            )
         self.result_table.resizeColumnsToContents()
 
     def export_to_excel(self):
@@ -850,31 +1064,58 @@ class KeywordApp(QMainWindow):
             QMessageBox.warning(self, "경고", "엑셀로 내보낼 데이터가 없습니다.")
             return
         if (filtered_df := self.results_df[self.results_df["분류"] != "일반"]).empty:
-            QMessageBox.information(self, "알림", "저장할 키워드가 없습니다. '일반' 분류만 존재합니다.")
+            QMessageBox.information(
+                self, "알림", "저장할 키워드가 없습니다. '일반' 분류만 존재합니다."
+            )
             return
         filename = f"keyword_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         try:
             with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
                 filtered_df.to_excel(writer, index=False, sheet_name="KeywordAnalysis")
                 workbook, worksheet = writer.book, writer.sheets["KeywordAnalysis"]
-                header_format = workbook.add_format({"bold": True, "font_color": "white", "bg_color": "#4F81BD", "align": "center", "valign": "vcenter", "border": 1})
+                header_format = workbook.add_format(
+                    {
+                        "bold": True,
+                        "font_color": "white",
+                        "bg_color": "#4F81BD",
+                        "align": "center",
+                        "valign": "vcenter",
+                        "border": 1,
+                    }
+                )
                 for col_num, value in enumerate(filtered_df.columns.values):
                     worksheet.write(0, col_num, value, header_format)
                 for idx, col in enumerate(filtered_df):
-                    max_len = max(filtered_df[col].astype(str).map(len).max(), len(str(filtered_df[col].name))) + 2
+                    max_len = (
+                        max(
+                            filtered_df[col].astype(str).map(len).max(),
+                            len(str(filtered_df[col].name)),
+                        )
+                        + 2
+                    )
                     worksheet.set_column(idx, idx, max_len)
             self.log_message("SUCCESS", f"✅ 성공! '{filename}' 파일이 저장되었습니다.")
-            QMessageBox.information(self, "성공", f"'{filename}' 파일이 성공적으로 저장되었습니다.")
+            QMessageBox.information(
+                self, "성공", f"'{filename}' 파일이 성공적으로 저장되었습니다."
+            )
         except Exception as e:
             self.log_message("ERROR", f"🚨 엑셀 저장 실패: {e}")
-            QMessageBox.critical(self, "오류", f"엑셀 파일 저장 중 오류가 발생했습니다:\n{e}")
+            QMessageBox.critical(
+                self, "오류", f"엑셀 파일 저장 중 오류가 발생했습니다:\n{e}"
+            )
 
     def log_message(self, level, message):
-        color_map = {"INFO": "#82C0FF", "SUCCESS": "#28A745", "WARNING": "orange", "ERROR": "#DC3545"}
+        color_map = {
+            "INFO": "#82C0FF",
+            "SUCCESS": "#28A745",
+            "WARNING": "orange",
+            "ERROR": "#DC3545",
+        }
         color = color_map.get(level, "#E0E0E0")
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f'<font color="{color}">[{timestamp}] - {level} - {message}</font>'
         self.log_widget.append(log_entry)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
