@@ -1103,6 +1103,7 @@ class KeywordApp(QMainWindow):
             self.status_label_fetch.setText(f"❌ 수집된 {first_column_name}별 트렌드 키워드가 없습니다.")
             return
         self.all_trend_data = trend_data
+        self.currently_displayed_data = self.all_trend_data  # 정렬에 사용될 현재 표시 데이터를 즉시 갱신
         self.status_label_fetch.setText(f"✅ {len(self.all_trend_data)}개 트렌드 키워드 수집 완료!")
         self.log_message("SUCCESS", f"{first_column_name}별 트렌드 키워드 수집이 완료되었습니다.")
         self.trend_table.setHorizontalHeaderLabels([first_column_name, "키워드", "순위변동"])
