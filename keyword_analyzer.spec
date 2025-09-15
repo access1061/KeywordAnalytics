@@ -1,8 +1,8 @@
+# keyword_analyzer.spec
+
 # -*- mode: python ; coding: utf-8 -*-
 import os
 import sys
-
-# 상단의 불필요한 selenium import 제거
 
 block_cipher = None
 
@@ -14,12 +14,18 @@ a = Analysis(
         ('version.json', '.'),
         ('style.qss', '.'),
         ('keyword_pro.ico', '.'),
-        ('api.env', '.'),
-        ('update_checker.py', '.')  # [수정] update_checker.py 파일 포함
-        # ('chrome_utils.py', '.') # [수정] 더 이상 사용하지 않으므로 제거
+        ('update_checker.py', '.') # 로컬 모듈 포함
     ],
-    # [수정] selenium과 webdriver_manager 추가
-    hiddenimports=['PyQt6', 'pandas', 'requests', 'python-dotenv', 'selenium', 'webdriver_manager'],
+    # [수정] hiddenimports 업데이트
+    hiddenimports=[
+        'PyQt6',
+        'pandas',
+        'requests',
+        'selenium',
+        'webdriver_manager',
+        'cryptography', # 암호화 라이브러리 추가
+        'xlsxwriter'    # 엑셀 엔진 추가
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
