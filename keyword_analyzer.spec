@@ -3,6 +3,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 import sys
+# [수정] 호환성 오류를 일으키는 import 라인을 삭제합니다.
+# from PyInstaller.utils.hooks import get_qt_plugins_paths
 
 block_cipher = None
 
@@ -10,21 +12,23 @@ a = Analysis(
     ['pyqt_app_new.py'],
     pathex=[],
     binaries=[],
+    # ▼▼▼ [수정] datas 섹션에서 get_qt_plugins_paths 호출을 제거합니다 ▼▼▼
     datas=[
         ('version.json', '.'),
         ('style.qss', '.'),
         ('keyword_pro.ico', '.'),
-        ('update_checker.py', '.') # 로컬 모듈 포함
     ],
-    # [수정] hiddenimports 업데이트
+    # ▲▲▲ [수정] 여기까지 교체 ▲▲▲
     hiddenimports=[
         'PyQt6',
         'pandas',
+        'numpy',
         'requests',
         'selenium',
         'webdriver_manager',
-        'cryptography', # 암호화 라이브러리 추가
-        'xlsxwriter'    # 엑셀 엔진 추가
+        'packaging',
+        'cryptography',
+        'xlsxwriter'
     ],
     hookspath=[],
     hooksconfig={},
