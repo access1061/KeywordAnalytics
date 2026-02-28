@@ -19,4 +19,4 @@ dll 이슈로 아래 파일로 빌드
 
 pyinstaller --windowed --name KeywordAnalyzerPro --icon=keyword_pro.ico --add-data "keyword_pro.ico;." --add-data "style.qss;." --hidden-import=xlsxwriter pyqt_app.py
 
-pyinstaller --onefile --windowed --name KeywordAnalyzerPro --icon=keyword_pro.ico --add-data "keyword_pro.ico;." --add-data "style.qss;." --hidden-import=xlsxwriter pyqt_app.py
+pyinstaller --onefile --windowed --name KeywordAnalyzerPro --icon=keyword_pro.ico --add-data "keyword_pro.ico;." --add-data "style.qss;." --hidden-import=xlsxwriter pyqt_app_new.py
