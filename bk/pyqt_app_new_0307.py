@@ -35,6 +35,10 @@ def resource_path(relative_path):
     return os.path.join(os.path.abspath("."), relative_path)
 
 def load_stylesheet():
+    """
+    [UI 개선] Win11/Win10 체크박스 및 라디오버튼 디자인 통합
+    OS 네이티브 테마의 간섭을 막고 모던 다크 테마를 기본으로 주입합니다.
+    """
     base_qss = """
         /* 체크박스 디자인 통일 */
         QCheckBox { spacing: 8px; font-size: 9pt; }
@@ -69,6 +73,7 @@ def save_auth_process(queue: Queue):
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         
+        # [핵심 개선 1] Temp 폴더 대신 영구적인 LocalAppData 사용 (Win11 세션 휘발 방지)
         app_data_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "KeywordAppPro", "ChromeProfile")
         os.makedirs(app_data_path, exist_ok=True)
         options.add_argument(f'--user-data-dir={app_data_path}')
@@ -108,6 +113,7 @@ def load_cookies_from_auth_file(path="auth.json"):
     except FileNotFoundError:
         return None
 
+# [핵심 개선 2] requests.Session() 주입을 통한 Connection Pooling (속도 향상)
 def get_naver_ad_keywords(keyword: str, api_key: str, secret_key: str, customer_id: str, session: requests.Session = None):
     if not all([api_key, secret_key, customer_id]):
         raise ValueError("광고 API 키가 없습니다.")
@@ -317,7 +323,7 @@ class KeywordApp(QMainWindow):
         self.fetch_trends_button = QPushButton("주제별 트렌드")
         self.fetch_age_trends_button = QPushButton("연령별 트렌드")
         self.copy_to_analyzer_button = QPushButton("키워드 → 분석 탭으로 복사")
-        self.category_filter_combo = QComboBox(); self.category_filter_combo.setFixedWidth(230)
+        self.category_filter_combo = QComboBox(); self.category_filter_combo.setFixedWidth(150)
         self.export_trends_excel_button = QPushButton("엑셀로 저장")
         
         self.copy_to_analyzer_button.setDisabled(True)
@@ -341,11 +347,10 @@ class KeywordApp(QMainWindow):
         control_layout.addWidget(status_container)
         
         self.trend_table = QTableWidget()
-        # 컬럼 순서 재배치 (키워드 우선)
-        headers = ["카테고리", "키워드", "순위", "순위변동"]
+        headers = ["카테고리", "키워드", "순위변동"]
         self.trend_table.setColumnCount(len(headers)); self.trend_table.setHorizontalHeaderLabels(headers)
         self.trend_table.setSortingEnabled(False)
-        self.trend_table.horizontalHeader().sectionClicked.connect(self.sort_trend_table)
+        self.trend_table.horizontalHeader().sectionClicked.connect(self.sort_trend_table_by_rank_change)
         
         layout.addWidget(control_widget)
         layout.addWidget(self.trend_table)
@@ -627,6 +632,7 @@ class KeywordApp(QMainWindow):
         if not cookies: raise ValueError("'auth.json' 파일을 찾을 수 없습니다. 인증 갱신 필요.")
         target_date_str = (datetime.now() - timedelta(days=2 if datetime.now().hour < 8 else 1)).strftime("%Y-%m-%d")
         
+        # [핵심 개선 2 적용] 세션을 통한 커넥션 유지
         with requests.Session() as session:
             try:
                 resp = session.get(f"{self.NAVER_TOPIC_TRENDS_API_URL}?categories={quote(self.CATEGORIES[0])}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=1&service=naver_blog", cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"}, timeout=10)
@@ -639,14 +645,9 @@ class KeywordApp(QMainWindow):
                 try:
                     resp = session.get(f"{self.NAVER_TOPIC_TRENDS_API_URL}?categories={quote(cat)}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=20&service=naver_blog", cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"})
                     if resp.status_code == 200 and (d := resp.json().get("data")) and d[0].get("queryList"):
-                        for r_idx, item in enumerate(d[0]["queryList"], 1):
+                        for item in d[0]["queryList"]:
                             rc = item.get("rankChange")
-                            all_trends_data.append({
-                                "카테고리": cat, 
-                                "순위": r_idx,
-                                "키워드": item.get("query", "N/A"), 
-                                "순위변동": int(rc) if rc is not None else None
-                            })
+                            all_trends_data.append({"카테고리": cat, "키워드": item.get("query", "N/A"), "순위변동": int(rc) if rc is not None else None})
                 except Exception: pass
                 time.sleep(0.2)
         return all_trends_data
@@ -666,14 +667,9 @@ class KeywordApp(QMainWindow):
                 try:
                     resp = session.get(self.NAVER_AGE_TRENDS_API_URL, params=params, cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"})
                     if resp.status_code == 200 and (ql := resp.json().get("data", [{}])[0].get("queryList")):
-                        for r_idx, item in enumerate(ql, 1):
+                        for item in ql:
                             rc = item.get("rankChange")
-                            all_age_trends.append({
-                                "연령대": group_name, 
-                                "순위": r_idx,
-                                "키워드": item.get("query", "N/A"), 
-                                "순위변동": int(rc) if rc is not None else None
-                            })
+                            all_age_trends.append({"연령대": group_name, "키워드": item.get("query", "N/A"), "순위변동": int(rc) if rc is not None else None})
                 except Exception: pass
                 time.sleep(0.2)
         return all_age_trends
@@ -682,6 +678,7 @@ class KeywordApp(QMainWindow):
         unique_kw = list(dict.fromkeys(keywords))
         analysis_results = []
         
+        # [핵심 개선 2 적용] 세션을 통한 커넥션 유지로 속도 비약적 향상
         with requests.Session() as session:
             for i, original_kw in enumerate(unique_kw):
                 worker_instance.progress.emit(int((i + 1) / len(unique_kw) * 100))
@@ -708,13 +705,11 @@ class KeywordApp(QMainWindow):
         if not cookies: raise ValueError("인증 필요.")
         url = "https://creator-advisor.naver.com/api/v6/trend/main-inflow-content-ranks"
         params = {"service": "naver_blog", "date": (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"), "interval": "day"}
-        
-        with requests.Session() as session:
-            try:
-                r = session.get(url, params=params, cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"}, timeout=10)
-                r.raise_for_status()
-                return [{"rank": str(i), "title": item.get("title"), "link": item.get("url")} for i, item in enumerate(r.json().get("data", []), 1)]
-            except Exception as e: raise ValueError(f"API 요청 실패: {e}")
+        try:
+            r = requests.get(url, params=params, cookies=cookies, headers={"Referer": "https://creator-advisor.naver.com/"}, timeout=10)
+            r.raise_for_status()
+            return [{"rank": str(i), "title": item.get("title"), "link": item.get("url")} for i, item in enumerate(r.json().get("data", []), 1)]
+        except Exception as e: raise ValueError(f"API 요청 실패: {e}")
 
     def fetch_blog_views_worker(self, worker_instance, start_date, end_date, time_dimension):
         cookies = load_cookies_from_auth_file()
@@ -771,110 +766,48 @@ class KeywordApp(QMainWindow):
         self._finish_trend_fetching_ui(age_trend_data, "연령대")
 
     def _finish_trend_fetching_ui(self, data, first_col):
-        self.fetch_trends_button.setDisabled(False)
-        self.fetch_age_trends_button.setDisabled(False)
-        self.progress_bar_fetch.setValue(100)
-        
-        if not data: 
-            self.status_label_fetch.setText("❌ 수집 실패.")
-            return
-            
-        self.all_trend_data = data
-        self.currently_displayed_data = data
-        self.status_label_fetch.setText(f"✅ {len(data)}개 완료!")
-        
-        self.trend_table.setHorizontalHeaderLabels([first_col, "키워드", "순위", "순위변동"])
-        
-        self.category_filter_combo.blockSignals(True)
-        self.category_filter_combo.clear()
-        
-        self.category_filter_combo.addItem("전체 보기")
-        self.category_filter_combo.addItem("✨ 신규 진입(NEW) 전체")
-        self.category_filter_combo.addItem("🔥 최상위 신규 진입(1~5위 내 NEW)")
-        self.category_filter_combo.addItem("🚀 급상승 키워드(+5 계단 이상)")
-        
-        self.category_filter_combo.addItems(sorted(list(set(it[first_col] for it in data))))
-        self.category_filter_combo.blockSignals(False)
-        
-        self.populate_trend_table(data)
-        
-        self.copy_to_analyzer_button.setDisabled(False)
-        self.category_filter_combo.setDisabled(False)
-        self.export_trends_excel_button.setDisabled(False)
+        self.fetch_trends_button.setDisabled(False); self.fetch_age_trends_button.setDisabled(False); self.progress_bar_fetch.setValue(100)
+        if not data: self.status_label_fetch.setText("❌ 수집 실패."); return
+        self.all_trend_data = data; self.currently_displayed_data = data
+        self.status_label_fetch.setText(f"✅ {len(data)}개 완료!"); self.trend_table.setHorizontalHeaderLabels([first_col, "키워드", "순위변동"])
+        self.category_filter_combo.blockSignals(True); self.category_filter_combo.clear()
+        self.category_filter_combo.addItem("전체 보기"); self.category_filter_combo.addItems(sorted(list(set(it[first_col] for it in data))))
+        self.category_filter_combo.blockSignals(False); self.populate_trend_table(data)
+        self.copy_to_analyzer_button.setDisabled(False); self.category_filter_combo.setDisabled(False); self.export_trends_excel_button.setDisabled(False)
 
     def populate_trend_table(self, data):
-        self.trend_table.setUpdatesEnabled(False)
         self.trend_table.setRowCount(len(data))
-        if not data: 
-            self.trend_table.setUpdatesEnabled(True)
-            return
-            
+        if not data: return
         fk = list(data[0].keys())[0]
         for row, it in enumerate(data):
-            c_it = QTableWidgetItem(str(it[fk]))
-            k_it = QTableWidgetItem(str(it["키워드"]))
-            
-            rank_it = QTableWidgetItem(str(it["순위"]))
-            rank_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            
-            rc = it["순위변동"]
+            c_it, k_it, rc = QTableWidgetItem(str(it[fk])), QTableWidgetItem(str(it["키워드"])), it["순위변동"]
             r_it = QTableWidgetItem("NEW" if rc is None else ("-" if rc == 0 else f"{rc:g}"))
             r_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            
             if rc is None: r_it.setForeground(QColor("#28A745"))
             elif rc > 0: r_it.setForeground(QColor("#DC3545"))
             elif rc < 0: r_it.setForeground(QColor("#007BFF"))
-            
-            self.trend_table.setItem(row, 0, c_it)
-            self.trend_table.setItem(row, 1, k_it)
-            self.trend_table.setItem(row, 2, rank_it)
-            self.trend_table.setItem(row, 3, r_it)
-            
+            self.trend_table.setItem(row, 0, c_it); self.trend_table.setItem(row, 1, k_it); self.trend_table.setItem(row, 2, r_it)
         self.trend_table.resizeColumnsToContents()
-        self.trend_table.setUpdatesEnabled(True)
 
-    def sort_trend_table(self, idx):
-        # 2: 순위, 3: 순위변동
-        if idx not in [2, 3] or not self.currently_displayed_data: return
-        
+    def sort_trend_table_by_rank_change(self, idx):
+        if idx != 2 or not self.currently_displayed_data: return
         self.rank_sort_order = Qt.SortOrder.DescendingOrder if self.rank_sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
-        
-        if idx == 2:
-            sorted_data = sorted(self.currently_displayed_data, key=lambda x: x["순위"], reverse=(self.rank_sort_order == Qt.SortOrder.DescendingOrder))
-            self.populate_trend_table(sorted_data)
-        elif idx == 3:
-            new_items = [i for i in self.currently_displayed_data if i["순위변동"] is None]
-            other = sorted([i for i in self.currently_displayed_data if i["순위변동"] is not None], key=lambda x: x["순위변동"], reverse=(self.rank_sort_order == Qt.SortOrder.DescendingOrder))
-            self.populate_trend_table(new_items + other)
-
-        self.trend_table.horizontalHeader().setSortIndicatorShown(True)
-        self.trend_table.horizontalHeader().setSortIndicator(idx, self.rank_sort_order)
+        new_items = [i for i in self.currently_displayed_data if i["순위변동"] is None]
+        other = sorted([i for i in self.currently_displayed_data if i["순위변동"] is not None], key=lambda x: x["순위변동"], reverse=(self.rank_sort_order == Qt.SortOrder.DescendingOrder))
+        self.populate_trend_table(new_items + other)
+        self.trend_table.horizontalHeader().setSortIndicatorShown(True); self.trend_table.horizontalHeader().setSortIndicator(2, self.rank_sort_order)
 
     def filter_trend_table(self):
-        selected_filter = self.category_filter_combo.currentText()
+        cat = self.category_filter_combo.currentText()
         if not self.all_trend_data: return
         fk = list(self.all_trend_data[0].keys())[0]
-        
-        if selected_filter == "전체 보기":
-            self.currently_displayed_data = self.all_trend_data
-        elif selected_filter == "✨ 신규 진입(NEW) 전체":
-            self.currently_displayed_data = [i for i in self.all_trend_data if i.get("순위변동") is None]
-        elif selected_filter == "🔥 최상위 신규 진입(1~5위 내 NEW)":
-            self.currently_displayed_data = [i for i in self.all_trend_data if i.get("순위변동") is None and i.get("순위", 99) <= 5]
-        elif selected_filter == "🚀 급상승 키워드(+5 계단 이상)":
-            self.currently_displayed_data = [i for i in self.all_trend_data if i.get("순위변동") is not None and i.get("순위변동") >= 5]
-        else:
-            self.currently_displayed_data = [i for i in self.all_trend_data if i.get(fk) == selected_filter]
-            
+        self.currently_displayed_data = self.all_trend_data if cat == "전체 보기" else [i for i in self.all_trend_data if i[fk] == cat]
         self.populate_trend_table(self.currently_displayed_data)
 
     def on_analysis_finished(self, df):
-        self.analyze_button.setDisabled(False)
-        self.progress_bar_analysis.setValue(100)
+        self.analyze_button.setDisabled(False); self.progress_bar_analysis.setValue(100)
         if df is not None and not df.empty:
             self.results_df = df.sort_values(by="기회지수", ascending=False)
-            
-            self.result_table.setUpdatesEnabled(False)
             self.result_table.setRowCount(len(self.results_df))
             for r, row in enumerate(self.results_df.itertuples()):
                 self.result_table.setItem(r, 0, QTableWidgetItem(str(row.분류)))
@@ -882,65 +815,38 @@ class KeywordApp(QMainWindow):
                 self.result_table.setItem(r, 2, QTableWidgetItem(f"{row.총검색량:,}"))
                 self.result_table.setItem(r, 3, QTableWidgetItem(f"{row.총문서수:,}"))
                 self.result_table.setItem(r, 4, QTableWidgetItem(f"{row.기회지수:,}"))
-            self.result_table.resizeColumnsToContents()
-            self.result_table.setUpdatesEnabled(True)
-            self.export_excel_button.setDisabled(False)
+            self.result_table.resizeColumnsToContents(); self.export_excel_button.setDisabled(False)
 
     def on_autocomplete_finished(self, kw):
-        self.autocomplete_search_button.setDisabled(False)
-        
-        self.autocomplete_table.setUpdatesEnabled(False)
-        self.autocomplete_table.setRowCount(len(kw))
-        for r, k in enumerate(kw): 
-            self.autocomplete_table.setItem(r, 0, QTableWidgetItem(k))
+        self.autocomplete_search_button.setDisabled(False); self.autocomplete_table.setRowCount(len(kw))
+        for r, k in enumerate(kw): self.autocomplete_table.setItem(r, 0, QTableWidgetItem(k))
         self.autocomplete_table.resizeColumnsToContents()
-        self.autocomplete_table.setUpdatesEnabled(True)
 
     def on_naver_main_finished(self, res):
-        self.fetch_main_content_button.setDisabled(False)
-        
-        self.naver_main_table.setUpdatesEnabled(False)
-        self.naver_main_table.setRowCount(len(res))
+        self.fetch_main_content_button.setDisabled(False); self.naver_main_table.setRowCount(len(res))
         for r, it in enumerate(res):
             ri, ti = QTableWidgetItem(it["rank"]), QTableWidgetItem(it["title"])
-            ri.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            ti.setData(Qt.ItemDataRole.UserRole, it["link"])
-            self.naver_main_table.setItem(r, 0, ri)
-            self.naver_main_table.setItem(r, 1, ti)
-        self.naver_main_table.setUpdatesEnabled(True)
+            ri.setTextAlignment(Qt.AlignmentFlag.AlignCenter); ti.setData(Qt.ItemDataRole.UserRole, it["link"])
+            self.naver_main_table.setItem(r, 0, ri); self.naver_main_table.setItem(r, 1, ti)
 
     def on_fetch_blog_views_finished(self, data):
-        self.fetch_blog_views_button.setDisabled(False)
-        self.progress_bar_bv.setValue(100)
+        self.fetch_blog_views_button.setDisabled(False); self.progress_bar_bv.setValue(100)
         self.blog_views_table.horizontalHeaderItem(0).setText("날짜" if self.bv_mode_group.checkedId() == 0 else "기간")
-        
-        if not data: 
-            self.status_label_bv.setText("❌ 결과 없음.")
-            return
-            
-        self.blog_views_df = pd.DataFrame(data)
-        self.status_label_bv.setText(f"✅ {len(data)}개 완료!")
-        
-        self.blog_views_table.setUpdatesEnabled(False)
+        if not data: self.status_label_bv.setText("❌ 결과 없음."); return
+        self.blog_views_df = pd.DataFrame(data); self.status_label_bv.setText(f"✅ {len(data)}개 완료!")
         self.blog_views_table.setRowCount(len(data))
         for r, row in enumerate(self.blog_views_df.itertuples()):
             self.blog_views_table.setItem(r, 0, QTableWidgetItem(str(row.날짜)))
             self.blog_views_table.setItem(r, 1, QTableWidgetItem(str(row.순위)))
             self.blog_views_table.setItem(r, 2, QTableWidgetItem(f"{row.조회수:,}"))
-            ti = QTableWidgetItem(str(row.제목))
-            ti.setData(Qt.ItemDataRole.UserRole, str(row.게시물_주소))
+            ti = QTableWidgetItem(str(row.제목)); ti.setData(Qt.ItemDataRole.UserRole, str(row.게시물_주소))
             self.blog_views_table.setItem(r, 3, ti)
-            
-        self.blog_views_table.resizeColumnsToContents()
-        self.blog_views_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.blog_views_table.setUpdatesEnabled(True)
+        self.blog_views_table.resizeColumnsToContents(); self.blog_views_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.export_blog_views_button.setDisabled(False)
 
     def on_worker_error(self, err):
-        self.log_message("ERROR", f"오류: {err.splitlines()[0]}")
-        QMessageBox.critical(self, "오류", err.splitlines()[0])
-        for btn in [self.fetch_trends_button, self.fetch_age_trends_button, self.analyze_button, self.auth_button, self.autocomplete_search_button, self.fetch_main_content_button, self.fetch_blog_views_button]: 
-            btn.setDisabled(False)
+        self.log_message("ERROR", f"오류: {err.splitlines()[0]}"); QMessageBox.critical(self, "오류", err.splitlines()[0])
+        for btn in [self.fetch_trends_button, self.fetch_age_trends_button, self.analyze_button, self.auth_button, self.autocomplete_search_button, self.fetch_main_content_button, self.fetch_blog_views_button]: btn.setDisabled(False)
 
     # --- Utils ---
     def open_browser_link(self, r, c):
@@ -952,39 +858,27 @@ class KeywordApp(QMainWindow):
     def copy_trends_to_analyzer(self):
         if self.trend_table.rowCount() > 0:
             self.analysis_input_widget.setPlainText("\n".join(self.trend_table.item(r, 1).text() for r in range(self.trend_table.rowCount())))
-            self.tabs.setCurrentIndex(1)
-            self.log_message("INFO", "복사 완료.")
+            self.tabs.setCurrentIndex(1); self.log_message("INFO", "복사 완료.")
 
     def copy_autocomplete_to_analyzer(self):
         if (rows := self.autocomplete_table.rowCount()) > 0:
             kws = "\n".join(self.autocomplete_table.item(r, 0).text() for r in range(rows))
             cur = self.analysis_input_widget.toPlainText().strip()
-            self.analysis_input_widget.setPlainText(f"{cur}\n{kws}".strip())
-            self.tabs.setCurrentIndex(1)
+            self.analysis_input_widget.setPlainText(f"{cur}\n{kws}".strip()); self.tabs.setCurrentIndex(1)
 
     def export_trends_to_excel(self):
         if self.trend_table.rowCount() == 0: return
         os.makedirs("output", exist_ok=True)
-        df = pd.DataFrame([{
-            self.trend_table.horizontalHeaderItem(0).text(): self.trend_table.item(r, 0).text(), 
-            "키워드": self.trend_table.item(r, 1).text(), 
-            "순위": int(self.trend_table.item(r, 2).text()),
-            "순위변동": self.trend_table.item(r, 3).text()
-        } for r in range(self.trend_table.rowCount())])
-        df.to_excel(os.path.join("output", f"trend_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False)
-        QMessageBox.information(self, "성공", "저장 완료.")
+        df = pd.DataFrame([{self.trend_table.horizontalHeaderItem(0).text(): self.trend_table.item(r, 0).text(), "키워드": self.trend_table.item(r, 1).text(), "순위변동": self.trend_table.item(r, 2).text()} for r in range(self.trend_table.rowCount())])
+        df.to_excel(os.path.join("output", f"trend_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False); QMessageBox.information(self, "성공", "저장 완료.")
 
     def export_to_excel(self):
         if self.results_df is None or self.results_df.empty: return
-        os.makedirs("output", exist_ok=True)
-        self.results_df[self.results_df["분류"] != "일반"].to_excel(os.path.join("output", f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False)
-        QMessageBox.information(self, "성공", "저장 완료.")
+        os.makedirs("output", exist_ok=True); self.results_df[self.results_df["분류"] != "일반"].to_excel(os.path.join("output", f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False); QMessageBox.information(self, "성공", "저장 완료.")
 
     def export_blog_views_to_excel(self):
         if getattr(self, "blog_views_df", None) is None or self.blog_views_df.empty: return
-        os.makedirs("output", exist_ok=True)
-        self.blog_views_df.to_excel(os.path.join("output", f"views_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False)
-        QMessageBox.information(self, "성공", "저장 완료.")
+        os.makedirs("output", exist_ok=True); self.blog_views_df.to_excel(os.path.join("output", f"views_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False); QMessageBox.information(self, "성공", "저장 완료.")
 
     def log_message(self, level, msg):
         c = {"INFO": "#82C0FF", "SUCCESS": "#28A745", "WARNING": "orange", "ERROR": "#DC3545"}.get(level, "#E0E0E0")
