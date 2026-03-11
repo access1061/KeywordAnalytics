@@ -13,7 +13,6 @@ import requests
 from dotenv import load_dotenv
 from update_checker import UpdateChecker, get_current_version
 
-# [방어 확인] ET 임포트 정상 유지
 import xml.etree.ElementTree as ET
 
 from selenium import webdriver
@@ -53,7 +52,23 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+# [개선 5] OS 독립적인 앱 데이터 경로 생성 (platformdirs 대체제)
+def get_app_data_path():
+    if sys.platform == "win32":
+        return os.path.join(
+            os.getenv("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local")),
+            "KeywordAppPro",
+        )
+    elif sys.platform == "darwin":
+        return os.path.join(
+            os.path.expanduser("~/Library/Application Support"), "KeywordAppPro"
+        )
+    else:
+        return os.path.join(os.path.expanduser("~/.local/share"), "KeywordAppPro")
+
+
 def load_stylesheet():
+    # [개선 2] QSS 기반 동적 버튼 스타일링 적용 (cached 속성 활용)
     base_qss = """
         QCheckBox { spacing: 8px; font-size: 9pt; }
         QCheckBox::indicator { width: 18px; height: 18px; border: 2px solid #4A4A4A; border-radius: 4px; background-color: #2E2E2E; }
@@ -62,6 +77,12 @@ def load_stylesheet():
         QGroupBox { font-size: 9pt; font-weight: bold; border: 1px solid #D0D0D0; border-radius: 5px; margin-top: 12px; }
         QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; left: 10px; }
         QTextEdit { background-color: #2E2E2E; color: #F0F0F0; border: 1px solid #4A4A4A; border-radius: 4px; padding: 5px; }
+        
+        QPushButton[cached="true"] {
+            background-color: #17A2B8;
+            color: white;
+            font-weight: bold;
+        }
     """
     try:
         with open(resource_path("style.qss"), "r", encoding="utf-8") as f:
@@ -187,7 +208,7 @@ class WeeklyCalendarWidget(QCalendarWidget):
 
 
 # -----------------------------------------------------------------------------------------------------------------
-# [방어] BackgroundWorker 완벽 무결성 튜닝
+# BackgroundWorker
 # -----------------------------------------------------------------------------------------------------------------
 class BackgroundWorker(QObject):
     log = pyqtSignal(str, str)
@@ -204,91 +225,93 @@ class BackgroundWorker(QObject):
     analysis_done = pyqtSignal(object)
     autocomplete_done = pyqtSignal(list)
 
+    # [개선 10] 상수 클래스 변수화
+    CATEGORIES = [
+        "맛집",
+        "국내여행",
+        "세계여행",
+        "비즈니스·경제",
+        "패션·미용",
+        "상품리뷰",
+        "일상·생각",
+        "건강·의학",
+        "육아·결혼",
+        "요리·레시피",
+        "IT·컴퓨터",
+        "교육·학문",
+        "자동차",
+        "인테리어·DIY",
+        "스포츠",
+        "취미",
+        "방송",
+        "게임",
+        "스타·연예인",
+        "영화",
+        "공연·전시",
+        "반려동물",
+        "사회·정치",
+        "드라마",
+        "어학·외국어",
+        "문학·책",
+        "음악",
+        "만화·애니",
+        "좋은글·이미지",
+        "미술·디자인",
+        "원예·재배",
+        "사진",
+    ]
+    DEMO_CODES = [
+        "f_05",
+        "f_06",
+        "f_04",
+        "f_07",
+        "f_03",
+        "f_08",
+        "m_07",
+        "m_06",
+        "m_05",
+        "f_09",
+        "m_08",
+        "m_04",
+        "m_09",
+        "f_10",
+        "f_11",
+        "m_11",
+        "m_03",
+        "f_02",
+        "m_10",
+        "m_02",
+        "f_01",
+        "m_01",
+    ]
+    DEMO_MAP = {
+        "f_01": "0-12세 여자",
+        "f_02": "13-18세 여자",
+        "f_03": "19-24세 여자",
+        "f_04": "25-29세 여자",
+        "f_05": "30-34세 여자",
+        "f_06": "35-39세 여자",
+        "f_07": "40-44세 여자",
+        "f_08": "45-49세 여자",
+        "f_09": "50-54세 여자",
+        "f_10": "55-59세 여자",
+        "f_11": "60세- 여자",
+        "m_01": "0-12세 남자",
+        "m_02": "13-18세 남자",
+        "m_03": "19-24세 남자",
+        "m_04": "25-29세 남자",
+        "m_05": "30-34세 남자",
+        "m_06": "35-39세 남자",
+        "m_07": "40-44세 남자",
+        "m_08": "45-49세 남자",
+        "m_09": "50-54세 남자",
+        "m_10": "55-59세 남자",
+        "m_11": "60세- 남자",
+    }
+
     def __init__(self):
         super().__init__()
         self.driver = None
-        self.CATEGORIES = [
-            "맛집",
-            "국내여행",
-            "세계여행",
-            "비즈니스·경제",
-            "패션·미용",
-            "상품리뷰",
-            "일상·생각",
-            "건강·의학",
-            "육아·결혼",
-            "요리·레시피",
-            "IT·컴퓨터",
-            "교육·학문",
-            "자동차",
-            "인테리어·DIY",
-            "스포츠",
-            "취미",
-            "방송",
-            "게임",
-            "스타·연예인",
-            "영화",
-            "공연·전시",
-            "반려동물",
-            "사회·정치",
-            "드라마",
-            "어학·외국어",
-            "문학·책",
-            "음악",
-            "만화·애니",
-            "좋은글·이미지",
-            "미술·디자인",
-            "원예·재배",
-            "사진",
-        ]
-        self.DEMO_CODES = [
-            "f_05",
-            "f_06",
-            "f_04",
-            "f_07",
-            "f_03",
-            "f_08",
-            "m_07",
-            "m_06",
-            "m_05",
-            "f_09",
-            "m_08",
-            "m_04",
-            "m_09",
-            "f_10",
-            "f_11",
-            "m_11",
-            "m_03",
-            "f_02",
-            "m_10",
-            "m_02",
-            "f_01",
-            "m_01",
-        ]
-        self.DEMO_MAP = {
-            "f_01": "0-12세 여자",
-            "f_02": "13-18세 여자",
-            "f_03": "19-24세 여자",
-            "f_04": "25-29세 여자",
-            "f_05": "30-34세 여자",
-            "f_06": "35-39세 여자",
-            "f_07": "40-44세 여자",
-            "f_08": "45-49세 여자",
-            "f_09": "50-54세 여자",
-            "f_10": "55-59세 여자",
-            "f_11": "60세- 여자",
-            "m_01": "0-12세 남자",
-            "m_02": "13-18세 남자",
-            "m_03": "19-24세 남자",
-            "m_04": "25-29세 남자",
-            "m_05": "30-34세 남자",
-            "m_06": "35-39세 남자",
-            "m_07": "40-44세 남자",
-            "m_08": "45-49세 남자",
-            "m_09": "50-54세 남자",
-            "m_10": "55-59세 남자",
-            "m_11": "60세- 남자",
-        }
 
     def _get_fetch_script(self, url):
         return f"""
@@ -318,7 +341,20 @@ class BackgroundWorker(QObject):
         except json.JSONDecodeError:
             raise ValueError(f"JSON 파싱 실패 (응답 일부: {res_text[:100]}...)")
 
-    # [방어 2] 순위 변동값(rankChange) 안전한 Int 파싱기
+    # [개선 6] 조회수 전용 응답 검증기 캡슐화
+    def _validate_blog_views_response(self, res_text):
+        if not res_text:
+            raise ValueError("응답이 비어있습니다.")
+        try:
+            d = json.loads(res_text)
+        except json.JSONDecodeError:
+            raise ValueError(f"JSON 파싱 실패: {res_text[:100]}")
+        if isinstance(d, dict) and d.get("__fetch_error__"):
+            raise ValueError(f"HTTP 에러: {d.get('status')} - {d.get('body', '')}")
+        if not isinstance(d, dict) or "result" not in d:
+            raise ValueError("조회수 API 응답 구조가 변경되었습니다.")
+        return d
+
     def _parse_rank_change(self, rc):
         if rc is None:
             return None
@@ -358,13 +394,9 @@ class BackgroundWorker(QObject):
             options.add_argument("--disable-gpu")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
-            app_data_path = os.path.join(
-                os.path.expanduser("~"),
-                "AppData",
-                "Local",
-                "KeywordAppPro",
-                "ChromeProfile",
-            )
+
+            # [개선 5] 안정적인 크로스 플랫폼 경로 적용
+            app_data_path = os.path.join(get_app_data_path(), "ChromeProfile")
             os.makedirs(app_data_path, exist_ok=True)
             options.add_argument(f"--user-data-dir={app_data_path}")
 
@@ -390,7 +422,6 @@ class BackgroundWorker(QObject):
             for i, cat in enumerate(self.CATEGORIES):
                 self.progress.emit(int((i + 1) / len(self.CATEGORIES) * 100))
                 url = f"https://creator-advisor.naver.com/api/v6/trend/category?categories={quote(cat)}&contentType=text&date={target_date_str}&hasRankChange=true&interval=day&limit=20&service=naver_blog"
-
                 res_text = self.driver.execute_async_script(self._get_fetch_script(url))
                 try:
                     d = self._validate_response(res_text)
@@ -400,9 +431,7 @@ class BackgroundWorker(QObject):
                         and "queryList" in d["data"][0]
                     ):
                         for r_idx, item in enumerate(d["data"][0]["queryList"], 1):
-                            rc = self._parse_rank_change(
-                                item.get("rankChange")
-                            )  # 안전한 타입 변환
+                            rc = self._parse_rank_change(item.get("rankChange"))
                             all_trends_data.append(
                                 {
                                     "카테고리": cat,
@@ -412,7 +441,7 @@ class BackgroundWorker(QObject):
                                 }
                             )
                 except Exception as e:
-                    self.log.emit("WARNING", f"[{cat}] 데이터 파싱/통신 실패: {e}")
+                    self.log.emit("WARNING", f"[{cat}] 파싱/통신 실패: {e}")
                 time.sleep(0.3)
             self.trends_done.emit(all_trends_data)
         except Exception as e:
@@ -434,7 +463,6 @@ class BackgroundWorker(QObject):
                 gender, age_code = code.split("_")
                 group_name = self.DEMO_MAP.get(code, code)
                 url = f"https://creator-advisor.naver.com/api/v6/trend/demo?age={age_code}&date={target_date_str}&gender={gender}&hasRankChange=true&interval=day&limit=20&metric=cv&service=naver_blog"
-
                 res_text = self.driver.execute_async_script(self._get_fetch_script(url))
                 try:
                     d = self._validate_response(res_text)
@@ -444,9 +472,7 @@ class BackgroundWorker(QObject):
                         and "queryList" in d["data"][0]
                     ):
                         for r_idx, item in enumerate(d["data"][0]["queryList"], 1):
-                            rc = self._parse_rank_change(
-                                item.get("rankChange")
-                            )  # 안전한 타입 변환
+                            rc = self._parse_rank_change(item.get("rankChange"))
                             all_age_trends.append(
                                 {
                                     "연령대": group_name,
@@ -456,9 +482,7 @@ class BackgroundWorker(QObject):
                                 }
                             )
                 except Exception as e:
-                    self.log.emit(
-                        "WARNING", f"[{group_name}] 데이터 파싱/통신 실패: {e}"
-                    )
+                    self.log.emit("WARNING", f"[{group_name}] 파싱/통신 실패: {e}")
                 time.sleep(0.3)
             self.age_trends_done.emit(all_age_trends)
         except Exception as e:
@@ -471,11 +495,9 @@ class BackgroundWorker(QObject):
             self.log.emit("INFO", "🚀 메인 유입 데이터를 수집합니다...")
             params_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
             url = f"https://creator-advisor.naver.com/api/v6/trend/main-inflow-content-ranks?service=naver_blog&date={params_date}&interval=day"
-
             self.driver.set_script_timeout(10)
             res_text = self.driver.execute_async_script(self._get_fetch_script(url))
             d = self._validate_response(res_text)
-
             results = [
                 {"rank": str(i), "title": item.get("title"), "link": item.get("url")}
                 for i, item in enumerate(d.get("data", []), 1)
@@ -508,16 +530,9 @@ class BackgroundWorker(QObject):
                 self.progress.emit(int((i + 1) / len(dates) * 100))
                 ds = d.strftime("%Y-%m-%d")
                 url = f"https://blog.stat.naver.com/api/blog/rank/cvContentPc?timeDimension={time_dimension}&startDate={ds}"
-
                 res_text = self.driver.execute_async_script(self._get_fetch_script(url))
                 try:
-                    r_json = json.loads(res_text)
-                    if isinstance(r_json, dict) and r_json.get("__fetch_error__"):
-                        raise ValueError(f"HTTP 에러: {r_json.get('status')}")
-                    # [방어 5] 조회수 응답 구조 깐깐한 검증
-                    if not isinstance(r_json, dict) or "result" not in r_json:
-                        raise ValueError("조회수 API 응답 구조가 변경되었습니다.")
-
+                    r_json = self._validate_blog_views_response(res_text)
                     if "result" in r_json and (
                         rows := r_json["result"]
                         .get("statDataList", [{}])[0]
@@ -662,7 +677,6 @@ class BackgroundWorker(QObject):
                     self.log.emit("WARNING", f"Google 자동완성 오류: {e}")
         self.autocomplete_done.emit(sorted(list(res)))
 
-    # [방어 4] 에러 무시 안 하고 로그 남기기
     @pyqtSlot()
     def close_driver(self):
         if self.driver:
@@ -693,8 +707,20 @@ class KeywordApp(QMainWindow):
         self.setWindowTitle(f"키워드 분석기 Pro v{self.current_version}")
 
         self.is_working = False
-        self._closing = False  # [방어 3] 중복 종료 호출 방지 플래그
+        self._closing = False
         self.current_task = ""
+
+        self.cached_data = {
+            "trends": None,
+            "age_trends": None,
+            "main_inflow": None,
+            "blog_views": {},
+            "analysis": {},
+            "auto": {},
+        }
+        self.current_views_cache_key = ""
+        self.current_analysis_cache_key = None
+        self.current_auto_cache_key = ""
 
         self.all_trend_data = []
         self.rank_sort_order = Qt.SortOrder.DescendingOrder
@@ -751,6 +777,10 @@ class KeywordApp(QMainWindow):
         self.bg_worker = BackgroundWorker()
         self.bg_worker.moveToThread(self.bg_thread)
 
+        # [개선 9] 안전한 백그라운드 스레드 및 워커 메모리 해제
+        self.bg_thread.finished.connect(self.bg_worker.deleteLater)
+        self.bg_thread.finished.connect(self.bg_thread.deleteLater)
+
         self.req_open_browser.connect(self.bg_worker.open_browser)
         self.req_fetch_trends.connect(self.bg_worker.fetch_trends)
         self.req_fetch_age_trends.connect(self.bg_worker.fetch_age_trends)
@@ -765,8 +795,6 @@ class KeywordApp(QMainWindow):
         self.bg_worker.error.connect(self.on_worker_error)
 
         self.bg_worker.browser_opened.connect(self.on_browser_opened)
-
-        # [방어 3] 프로그램 종료 핸드셰이크 시그널을 미리 1번만 연결
         self.bg_worker.driver_closed.connect(self.final_quit)
 
         self.bg_worker.trends_done.connect(self.on_trend_fetching_finished)
@@ -777,6 +805,72 @@ class KeywordApp(QMainWindow):
         self.bg_worker.autocomplete_done.connect(self.on_autocomplete_finished)
 
         self.bg_thread.start()
+
+    # [개선 1] UI 상태 및 프로그레스 바 무결성 초기화
+    def _finish_task_state(self):
+        self.is_working = False
+        self.current_task = ""
+        self.set_all_buttons_disabled(False)
+
+    # [개선 3] 캐시 메모리 오버플로우 방지 (LRU Cache Limit)
+    def _add_to_cache(self, cache_dict, key, value, limit=30):
+        cache_dict[key] = value
+        if len(cache_dict) > limit:
+            first_key = next(iter(cache_dict))
+            del cache_dict[first_key]
+
+    # [개선 2] QSS 기반 동적 프로퍼티를 활용한 스타일 반응형 업데이트
+    def update_button_style(self, btn, is_cached, original_text):
+        btn.setProperty("cached", "true" if is_cached else "false")
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+        btn.setText(f"{original_text} (캐시됨)" if is_cached else original_text)
+
+    def check_views_cache_state(self):
+        cid = self.bv_mode_group.checkedId()
+        time_dim = {0: "DATE", 1: "WEEK", 2: "MONTH"}[cid]
+        d = self.bv_current_date
+        if cid == 0:
+            sd, ed = d.toPyDate(), d.toPyDate()
+        elif cid == 1:
+            sw = d.addDays(-(d.dayOfWeek() - 1))
+            sd, ed = sw.toPyDate(), sw.addDays(6).toPyDate()
+        elif cid == 2:
+            sd, ed = (
+                QDate(d.year(), d.month(), 1).toPyDate(),
+                QDate(d.year(), d.month(), d.daysInMonth()).toPyDate(),
+            )
+
+        cache_key = f"{sd}_{ed}_{time_dim}"
+        is_cached = cache_key in self.cached_data.get("blog_views", {})
+        self.update_button_style(
+            self.fetch_blog_views_button, is_cached, "켜진 창에서 조회수 순위 가져오기"
+        )
+
+    def check_analysis_cache_state(self):
+        keywords = [
+            kw.strip()
+            for kw in self.analysis_input_widget.toPlainText().strip().split("\n")
+            if kw.strip()
+        ]
+        cache_key = tuple(sorted(list(set(keywords))))
+        is_cached = bool(keywords) and cache_key in self.cached_data.get("analysis", {})
+        self.update_button_style(self.analyze_button, is_cached, "기회지수 분석 시작")
+
+    def check_auto_cache_state(self):
+        kw = self.autocomplete_input.text().strip()
+        engines = [
+            name
+            for cb, name in [("naver", "naver"), ("daum", "daum"), ("google", "google")]
+            if getattr(self, f"cb_{cb}").isChecked()
+        ]
+        cache_key = f"{kw}_{'-'.join(sorted(engines))}"
+        is_cached = (
+            bool(kw) and bool(engines) and cache_key in self.cached_data.get("auto", {})
+        )
+        self.update_button_style(
+            self.autocomplete_search_button, is_cached, "자동완성 검색"
+        )
 
     def set_all_buttons_disabled(self, disabled):
         self.auth_button.setDisabled(disabled)
@@ -820,9 +914,13 @@ class KeywordApp(QMainWindow):
         self.reset_button = QPushButton("화면 초기화")
         self.reset_button.clicked.connect(self.reset_ui)
         self.auth_button = QPushButton("1. 네이버 연결 (브라우저 열기)")
+
+        # QSS 기반이므로 강제 스타일 제외
+        self.auth_button.setObjectName("primaryBtn")
         self.auth_button.setStyleSheet(
             "background-color: #007BFF; font-weight: bold; padding: 8px;"
         )
+
         self.auth_button.clicked.connect(self.start_open_browser)
         settings_layout.addStretch()
         settings_layout.addWidget(self.reset_button)
@@ -835,26 +933,37 @@ class KeywordApp(QMainWindow):
         control_layout = QHBoxLayout()
         self.fetch_trends_button = QPushButton("2-1. 켜진 창에서 주제별 수집")
         self.fetch_age_trends_button = QPushButton("2-2. 켜진 창에서 연령별 수집")
+
+        # 초기 스타일 속성 부여
         self.fetch_trends_button.setStyleSheet(
             "background-color: #28A745; font-weight: bold;"
         )
         self.fetch_age_trends_button.setStyleSheet(
             "background-color: #28A745; font-weight: bold;"
         )
+
         self.copy_to_analyzer_button = QPushButton("키워드 → 분석 탭으로 복사")
         self.category_filter_combo = QComboBox()
-        self.category_filter_combo.setFixedWidth(230)
+        self.category_filter_combo.setFixedWidth(160)
+        self.trend_search_input = QLineEdit()
+        self.trend_search_input.setPlaceholderText("결과 내 검색...")
+        self.trend_search_input.setFixedWidth(140)
+
         self.export_trends_excel_button = QPushButton("엑셀로 저장")
         self.copy_to_analyzer_button.setDisabled(True)
         self.category_filter_combo.setDisabled(True)
+        self.trend_search_input.setDisabled(True)
         self.export_trends_excel_button.setDisabled(True)
+
         control_layout.addWidget(self.fetch_trends_button)
         control_layout.addWidget(self.fetch_age_trends_button)
         control_layout.addWidget(self.copy_to_analyzer_button)
         control_layout.addWidget(QLabel("필터:"))
         control_layout.addWidget(self.category_filter_combo)
+        control_layout.addWidget(self.trend_search_input)
         control_layout.addWidget(self.export_trends_excel_button)
         control_layout.addStretch()
+
         status_container = QWidget()
         status_container.setMinimumWidth(350)
         status_layout = QVBoxLayout(status_container)
@@ -867,6 +976,7 @@ class KeywordApp(QMainWindow):
         status_layout.addWidget(self.status_label_fetch)
         status_layout.addWidget(self.progress_bar_fetch)
         control_layout.addWidget(status_container)
+
         self.trend_table = QTableWidget()
         headers = ["카테고리", "키워드", "순위", "순위변동"]
         self.trend_table.setColumnCount(len(headers))
@@ -875,13 +985,16 @@ class KeywordApp(QMainWindow):
         self.trend_table.horizontalHeader().sectionClicked.connect(
             self.sort_trend_table
         )
+
         layout.addLayout(control_layout)
         layout.addWidget(self.trend_table)
         self.tabs.addTab(tab, "트렌드 키워드 수집")
+
         self.fetch_trends_button.clicked.connect(self.start_trend_fetching)
         self.fetch_age_trends_button.clicked.connect(self.start_age_trend_fetching)
         self.copy_to_analyzer_button.clicked.connect(self.copy_trends_to_analyzer)
         self.category_filter_combo.currentIndexChanged.connect(self.filter_trend_table)
+        self.trend_search_input.textChanged.connect(self.filter_trend_table)
         self.export_trends_excel_button.clicked.connect(self.export_trends_to_excel)
 
     def create_analysis_tab(self):
@@ -890,6 +1003,9 @@ class KeywordApp(QMainWindow):
         placeholder_text = "--- 키워드를 입력하거나 붙여넣어 주세요 (한 줄에 하나씩) ---\n\n💡 '기회 지수'란?\n'월간 총검색량 ÷ 블로그 총문서수'로 계산되는 값으로,\n문서(공급) 대비 검색량(수요)이 얼마나 높은지를 나타내는 지표입니다."
         self.analysis_input_widget = QTextEdit()
         self.analysis_input_widget.setPlaceholderText(placeholder_text)
+
+        self.analysis_input_widget.textChanged.connect(self.check_analysis_cache_state)
+
         control_layout = QHBoxLayout()
         self.analyze_button = QPushButton("기회지수 분석 시작")
         self.export_excel_button = QPushButton("엑셀로 저장")
@@ -920,6 +1036,10 @@ class KeywordApp(QMainWindow):
         input_layout = QHBoxLayout()
         self.autocomplete_input = QLineEdit()
         self.autocomplete_input.setPlaceholderText("자동완성 키워드 입력...")
+        self.autocomplete_input.textChanged.connect(
+            lambda _: self.check_auto_cache_state()
+        )
+
         input_layout.addWidget(QLabel("검색어:"), 0)
         input_layout.addWidget(self.autocomplete_input, 1)
         checkbox_layout = QHBoxLayout()
@@ -931,6 +1051,11 @@ class KeywordApp(QMainWindow):
         self.cb_naver.setChecked(True)
         self.cb_daum.setChecked(True)
         self.cb_google.setChecked(True)
+
+        self.cb_naver.stateChanged.connect(lambda _: self.check_auto_cache_state())
+        self.cb_daum.stateChanged.connect(lambda _: self.check_auto_cache_state())
+        self.cb_google.stateChanged.connect(lambda _: self.check_auto_cache_state())
+
         checkbox_layout.addWidget(self.cb_naver)
         checkbox_layout.addWidget(self.cb_daum)
         checkbox_layout.addWidget(self.cb_google)
@@ -1025,8 +1150,11 @@ class KeywordApp(QMainWindow):
         bottom_control_layout = QHBoxLayout()
         bottom_control_layout.setContentsMargins(0, 5, 0, 0)
         self.fetch_blog_views_button = QPushButton("켜진 창에서 조회수 순위 가져오기")
-        self.fetch_blog_views_button.setStyleSheet(
-            "background-color: #28A745; font-weight: bold;"
+        self.update_button_style(
+            self.fetch_blog_views_button,
+            False,
+            "켜진 창에서 조회수 순위 가져오기",
+            "background-color: #28A745; font-weight: bold;",
         )
         self.export_blog_views_button = QPushButton("엑셀로 저장")
         self.export_blog_views_button.setDisabled(True)
@@ -1086,6 +1214,7 @@ class KeywordApp(QMainWindow):
             )
         elif cid == 2:
             self.bv_date_label.setText(d.toString("yyyy.MM."))
+        self.check_views_cache_state()
 
     def bv_navigate_prev(self):
         cid = self.bv_mode_group.checkedId()
@@ -1136,14 +1265,25 @@ class KeywordApp(QMainWindow):
             self.bv_calendar_popup.hide()
 
     def reset_ui(self):
-        # [방어 7] 숨어있는 DataFrame 데이터 완전 초기화
+        self.cached_data = {
+            "trends": None,
+            "age_trends": None,
+            "main_inflow": None,
+            "blog_views": {},
+            "analysis": {},
+            "auto": {},
+        }
         self.results_df = None
         self.blog_views_df = None
-
         self.trend_table.setRowCount(0)
         self.all_trend_data = []
+        self.category_filter_combo.blockSignals(True)
         self.category_filter_combo.clear()
+        self.category_filter_combo.blockSignals(False)
+        self.trend_search_input.clear()
+
         self.category_filter_combo.setDisabled(True)
+        self.trend_search_input.setDisabled(True)
         self.export_trends_excel_button.setDisabled(True)
         self.copy_to_analyzer_button.setDisabled(True)
         self.rank_sort_order = Qt.SortOrder.DescendingOrder
@@ -1166,9 +1306,32 @@ class KeywordApp(QMainWindow):
         self.status_label_bv.setText("조회할 기간을 선택하고 버튼을 눌러주세요.")
         self.progress_bar_bv.setValue(0)
         self.export_blog_views_button.setDisabled(True)
-        self.log_message("INFO", "모든 작업 공간이 초기화되었습니다.")
 
-    # --- Actions ---
+        # 버튼 스타일 초기화
+        self.update_button_style(
+            self.fetch_trends_button,
+            False,
+            "2-1. 켜진 창에서 주제별 수집",
+            "background-color: #28A745; font-weight: bold;",
+        )
+        self.update_button_style(
+            self.fetch_age_trends_button,
+            False,
+            "2-2. 켜진 창에서 연령별 수집",
+            "background-color: #28A745; font-weight: bold;",
+        )
+        self.update_button_style(
+            self.fetch_main_content_button,
+            False,
+            "켜진 창에서 메인 유입콘텐츠 가져오기",
+            "background-color: #28A745; font-weight: bold;",
+        )
+        self.check_views_cache_state()
+        self.check_analysis_cache_state()
+        self.check_auto_cache_state()
+
+        self.log_message("INFO", "화면 및 메모리 캐시가 모두 초기화되었습니다.")
+
     def start_open_browser(self):
         if self.is_working:
             return
@@ -1178,8 +1341,7 @@ class KeywordApp(QMainWindow):
 
     @pyqtSlot()
     def on_browser_opened(self):
-        self.is_working = False
-        self.set_all_buttons_disabled(False)
+        self._finish_task_state()
         QMessageBox.information(
             self,
             "안내",
@@ -1189,6 +1351,14 @@ class KeywordApp(QMainWindow):
     def start_trend_fetching(self):
         if self.is_working:
             return
+        if self.cached_data.get("trends"):
+            QMessageBox.information(
+                self,
+                "캐시 적용됨",
+                "💡 이미 데이터가 수집되어 화면에 표시되어 있습니다.\n(최신 데이터로 갱신하려면 '화면 초기화' 후 진행하세요)",
+            )
+            return
+
         self.is_working = True
         self.current_task = "trends"
         self.set_all_buttons_disabled(True)
@@ -1200,6 +1370,14 @@ class KeywordApp(QMainWindow):
     def start_age_trend_fetching(self):
         if self.is_working:
             return
+        if self.cached_data.get("age_trends"):
+            QMessageBox.information(
+                self,
+                "캐시 적용됨",
+                "💡 이미 데이터가 수집되어 화면에 표시되어 있습니다.\n(최신 데이터로 갱신하려면 '화면 초기화' 후 진행하세요)",
+            )
+            return
+
         self.is_working = True
         self.current_task = "age"
         self.set_all_buttons_disabled(True)
@@ -1211,6 +1389,14 @@ class KeywordApp(QMainWindow):
     def start_fetch_naver_main(self):
         if self.is_working:
             return
+        if self.cached_data.get("main_inflow"):
+            QMessageBox.information(
+                self,
+                "캐시 적용됨",
+                "💡 이미 데이터가 수집되어 화면에 표시되어 있습니다.\n(최신 데이터로 갱신하려면 '화면 초기화' 후 진행하세요)",
+            )
+            return
+
         self.is_working = True
         self.current_task = "main"
         self.set_all_buttons_disabled(True)
@@ -1221,9 +1407,6 @@ class KeywordApp(QMainWindow):
     def start_fetch_blog_views(self):
         if self.is_working:
             return
-        self.is_working = True
-        self.current_task = "views"
-        self.set_all_buttons_disabled(True)
         cid = self.bv_mode_group.checkedId()
         time_dim = {0: "DATE", 1: "WEEK", 2: "MONTH"}[cid]
         d = self.bv_current_date
@@ -1237,6 +1420,31 @@ class KeywordApp(QMainWindow):
                 QDate(d.year(), d.month(), 1).toPyDate(),
                 QDate(d.year(), d.month(), d.daysInMonth()).toPyDate(),
             )
+
+        cache_key = f"{sd}_{ed}_{time_dim}"
+        if cache_key in self.cached_data["blog_views"]:
+            if getattr(self, "current_views_cache_key", None) == cache_key:
+                QMessageBox.information(
+                    self,
+                    "캐시 적용됨",
+                    "💡 선택하신 기간의 데이터가 이미 화면에 표시되어 있습니다.",
+                )
+                return
+            else:
+                self.current_views_cache_key = cache_key
+                self.log_message(
+                    "SUCCESS", "💡 [메모리 캐시] 저장된 조회수 데이터를 즉시 띄웁니다."
+                )
+                self.current_task = "views"
+                self.on_fetch_blog_views_finished(
+                    self.cached_data["blog_views"][cache_key]
+                )
+                return
+
+        self.current_views_cache_key = cache_key
+        self.is_working = True
+        self.current_task = "views"
+        self.set_all_buttons_disabled(True)
         self.status_label_bv.setText(f"수집 중...")
         self.blog_views_table.setRowCount(0)
         self.progress_bar_bv.setValue(0)
@@ -1252,6 +1460,7 @@ class KeywordApp(QMainWindow):
                 "하나 이상의 API 키가 없습니다. 'api.env' 파일을 확인해주세요.",
             )
             return
+
         keywords = [
             kw.strip()
             for kw in self.analysis_input_widget.toPlainText().strip().split("\n")
@@ -1262,6 +1471,26 @@ class KeywordApp(QMainWindow):
                 self, "경고", "분석할 키워드를 입력하거나 붙여넣어 주세요."
             )
             return
+
+        cache_key = tuple(sorted(list(set(keywords))))
+        if cache_key in self.cached_data["analysis"]:
+            if getattr(self, "current_analysis_cache_key", None) == cache_key:
+                QMessageBox.information(
+                    self,
+                    "캐시 적용됨",
+                    "💡 동일한 키워드의 분석 결과가 이미 화면에 표시되어 있습니다.",
+                )
+                return
+            else:
+                self.current_analysis_cache_key = cache_key
+                self.log_message(
+                    "SUCCESS", "💡 [메모리 캐시] 저장된 분석 결과를 즉시 띄웁니다."
+                )
+                self.current_task = "analysis"
+                self.on_analysis_finished(self.cached_data["analysis"][cache_key])
+                return
+
+        self.current_analysis_cache_key = cache_key
         self.is_working = True
         self.current_task = "analysis"
         self.set_all_buttons_disabled(True)
@@ -1276,54 +1505,85 @@ class KeywordApp(QMainWindow):
         if not kw:
             QMessageBox.warning(self, "입력 오류", "검색어를 입력해주세요.")
             return
+
         engines = [
             name
-            for cb, name in [
-                (self.cb_naver, "naver"),
-                (self.cb_daum, "daum"),
-                (self.cb_google, "google"),
-            ]
-            if cb.isChecked()
+            for cb, name in [("naver", "naver"), ("daum", "daum"), ("google", "google")]
+            if getattr(self, f"cb_{cb}").isChecked()
         ]
         if not engines:
             QMessageBox.warning(
                 self, "선택 오류", "검색 엔진을 하나 이상 선택해주세요."
             )
             return
+
+        cache_key = f"{kw}_{'-'.join(sorted(engines))}"
+        if cache_key in self.cached_data["auto"]:
+            if getattr(self, "current_auto_cache_key", None) == cache_key:
+                QMessageBox.information(
+                    self,
+                    "캐시 적용됨",
+                    "💡 동일한 조건의 자동완성 결과가 이미 화면에 표시되어 있습니다.",
+                )
+                return
+            else:
+                self.current_auto_cache_key = cache_key
+                self.log_message(
+                    "SUCCESS", "💡 [메모리 캐시] 저장된 자동완성 결과를 즉시 띄웁니다."
+                )
+                self.current_task = "auto"
+                self.on_autocomplete_finished(self.cached_data["auto"][cache_key])
+                return
+
+        self.current_auto_cache_key = cache_key
         self.is_working = True
         self.current_task = "auto"
         self.set_all_buttons_disabled(True)
         self.autocomplete_table.setRowCount(0)
         self.req_fetch_autocomplete.emit(kw, engines)
 
-    # --- Callbacks ---
     def on_worker_error(self, err):
-        self.is_working = False
-        self.set_all_buttons_disabled(False)
+        self._finish_task_state()
         self.log_message("ERROR", f"오류 발생: {err.splitlines()[0]}")
         QMessageBox.critical(self, "오류", err.splitlines()[0])
 
     def on_trend_fetching_finished(self, data):
-        self.is_working = False
-        self.set_all_buttons_disabled(False)
+        self.update_progress_bar(100)
+        self._finish_task_state()
+        if data:
+            self.cached_data["trends"] = data
+            self.update_button_style(
+                self.fetch_trends_button,
+                True,
+                "2-1. 켜진 창에서 주제별 수집",
+                "background-color: #28A745; font-weight: bold;",
+            )
         self._finish_trend_fetching_ui(data, "카테고리")
 
     def on_age_trend_fetching_finished(self, data):
-        self.is_working = False
-        self.set_all_buttons_disabled(False)
+        self.update_progress_bar(100)
+        self._finish_task_state()
+        if data:
+            self.cached_data["age_trends"] = data
+            self.update_button_style(
+                self.fetch_age_trends_button,
+                True,
+                "2-2. 켜진 창에서 연령별 수집",
+                "background-color: #28A745; font-weight: bold;",
+            )
         self._finish_trend_fetching_ui(data, "연령대")
 
     def _finish_trend_fetching_ui(self, data, first_col):
-        self.progress_bar_fetch.setValue(100)
         if not data:
             self.status_label_fetch.setText("❌ 수집 실패.")
             return
-        self.all_trend_data = data
-        self.currently_displayed_data = data
+
+        self.all_trend_data = list(data)
         self.status_label_fetch.setText(f"✅ {len(data)}개 완료!")
         self.trend_table.setHorizontalHeaderLabels(
             [first_col, "키워드", "순위", "순위변동"]
         )
+
         self.category_filter_combo.blockSignals(True)
         self.category_filter_combo.clear()
         self.category_filter_combo.addItem("전체 보기")
@@ -1331,12 +1591,19 @@ class KeywordApp(QMainWindow):
         self.category_filter_combo.addItem("🔥 최상위 신규 진입(1~5위 내 NEW)")
         self.category_filter_combo.addItem("🚀 급상승 키워드(+5 계단 이상)")
         self.category_filter_combo.addItems(
-            sorted(list(set(it[first_col] for it in data)))
+            sorted(list(set(str(it.get(first_col, "")) for it in data)))
         )
         self.category_filter_combo.blockSignals(False)
+
+        self.trend_search_input.blockSignals(True)
+        self.trend_search_input.clear()
+        self.trend_search_input.blockSignals(False)
+
         self.populate_trend_table(data)
+
         self.copy_to_analyzer_button.setDisabled(False)
         self.category_filter_combo.setDisabled(False)
+        self.trend_search_input.setDisabled(False)
         self.export_trends_excel_button.setDisabled(False)
 
     def populate_trend_table(self, data):
@@ -1345,15 +1612,17 @@ class KeywordApp(QMainWindow):
         if not data:
             self.trend_table.setUpdatesEnabled(True)
             return
-        fk = list(data[0].keys())[0]
+
+        fk = "카테고리" if "카테고리" in data[0] else "연령대"
+
         for row, it in enumerate(data):
-            c_it = QTableWidgetItem(str(it[fk]))
-            k_it = QTableWidgetItem(str(it["키워드"]))
-            rank_it = QTableWidgetItem(str(it["순위"]))
+            c_it = QTableWidgetItem(str(it.get(fk, "")))
+            k_it = QTableWidgetItem(str(it.get("키워드", "")))
+
+            rank_it = QTableWidgetItem(str(it.get("순위", "")))
             rank_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            rc = it["순위변동"]
-            # [방어] 정수화된 rc를 포맷 에러 없이 렌더링
+            rc = it.get("순위변동")
             r_it = QTableWidgetItem(
                 "NEW" if rc is None else ("-" if rc == 0 else f"{rc:g}")
             )
@@ -1370,72 +1639,82 @@ class KeywordApp(QMainWindow):
             self.trend_table.setItem(row, 1, k_it)
             self.trend_table.setItem(row, 2, rank_it)
             self.trend_table.setItem(row, 3, r_it)
+
         self.trend_table.resizeColumnsToContents()
         self.trend_table.setUpdatesEnabled(True)
+        self.filter_trend_table()
 
     def sort_trend_table(self, idx):
-        if idx not in [2, 3] or not self.currently_displayed_data:
+        if idx not in [2, 3] or not self.all_trend_data:
             return
         self.rank_sort_order = (
             Qt.SortOrder.DescendingOrder
             if self.rank_sort_order == Qt.SortOrder.AscendingOrder
             else Qt.SortOrder.AscendingOrder
         )
+
         if idx == 2:
-            sorted_data = sorted(
-                self.currently_displayed_data,
+            self.all_trend_data.sort(
                 key=lambda x: x["순위"],
                 reverse=(self.rank_sort_order == Qt.SortOrder.DescendingOrder),
             )
         elif idx == 3:
-            new_items = [
-                i for i in self.currently_displayed_data if i["순위변동"] is None
-            ]
+            new_items = [i for i in self.all_trend_data if i["순위변동"] is None]
             other = sorted(
-                [i for i in self.currently_displayed_data if i["순위변동"] is not None],
+                [i for i in self.all_trend_data if i["순위변동"] is not None],
                 key=lambda x: x["순위변동"],
                 reverse=(self.rank_sort_order == Qt.SortOrder.DescendingOrder),
             )
-            sorted_data = new_items + other
-        self.currently_displayed_data = sorted_data
-        self.populate_trend_table(sorted_data)
+            self.all_trend_data = new_items + other
+
+        self.populate_trend_table(self.all_trend_data)
         self.trend_table.horizontalHeader().setSortIndicatorShown(True)
         self.trend_table.horizontalHeader().setSortIndicator(idx, self.rank_sort_order)
 
     def filter_trend_table(self):
         selected_filter = self.category_filter_combo.currentText()
-        if not self.all_trend_data:
+        search_text = self.trend_search_input.text().strip().lower()
+
+        if self.trend_table.rowCount() == 0:
             return
-        fk = list(self.all_trend_data[0].keys())[0]
-        if selected_filter == "전체 보기":
-            self.currently_displayed_data = self.all_trend_data
-        elif selected_filter == "✨ 신규 진입(NEW) 전체":
-            self.currently_displayed_data = [
-                i for i in self.all_trend_data if i.get("순위변동") is None
-            ]
-        elif selected_filter == "🔥 최상위 신규 진입(1~5위 내 NEW)":
-            self.currently_displayed_data = [
-                i
-                for i in self.all_trend_data
-                if i.get("순위변동") is None and i.get("순위", 99) <= 5
-            ]
-        elif selected_filter == "🚀 급상승 키워드(+5 계단 이상)":
-            self.currently_displayed_data = [
-                i
-                for i in self.all_trend_data
-                if i.get("순위변동") is not None and i.get("순위변동") >= 5
-            ]
-        else:
-            self.currently_displayed_data = [
-                i for i in self.all_trend_data if i.get(fk) == selected_filter
-            ]
-        self.populate_trend_table(self.currently_displayed_data)
+
+        for row in range(self.trend_table.rowCount()):
+            cat_text = self.trend_table.item(row, 0).text()
+            kwd_text = self.trend_table.item(row, 1).text().lower()
+            rank_text = self.trend_table.item(row, 2).text()
+            rc_text = self.trend_table.item(row, 3).text()
+
+            hide_row = False
+
+            if selected_filter and selected_filter != "전체 보기":
+                if selected_filter == "✨ 신규 진입(NEW) 전체":
+                    if rc_text != "NEW":
+                        hide_row = True
+                elif selected_filter == "🔥 최상위 신규 진입(1~5위 내 NEW)":
+                    if rc_text != "NEW" or int(rank_text) > 5:
+                        hide_row = True
+                elif selected_filter == "🚀 급상승 키워드(+5 계단 이상)":
+                    if rc_text in ["NEW", "-"] or int(rc_text) < 5:
+                        hide_row = True
+                else:
+                    if cat_text != selected_filter:
+                        hide_row = True
+
+            if search_text and search_text not in kwd_text:
+                hide_row = True
+
+            self.trend_table.setRowHidden(row, hide_row)
 
     def on_analysis_finished(self, df):
-        self.is_working = False
-        self.set_all_buttons_disabled(False)
-        self.progress_bar_analysis.setValue(100)
+        self.update_progress_bar(100)
+        self._finish_task_state()
+
         if df is not None and not df.empty:
+            ck = getattr(self, "current_analysis_cache_key", None)
+            if ck and ck not in self.cached_data["analysis"]:
+                self._add_to_cache(self.cached_data["analysis"], ck, df, limit=30)
+            self.check_analysis_cache_state()
+
             self.results_df = df.sort_values(by="기회지수", ascending=False)
             self.result_table.setUpdatesEnabled(False)
             self.result_table.setRowCount(len(self.results_df))
@@ -1452,8 +1731,14 @@ class KeywordApp(QMainWindow):
             self.log_message("WARNING", "분석된 키워드가 0건입니다.")
 
     def on_autocomplete_finished(self, kw):
-        self.is_working = False
-        self.set_all_buttons_disabled(False)
+        self._finish_task_state()
+
+        if kw:
+            ck = getattr(self, "current_auto_cache_key", None)
+            if ck and ck not in self.cached_data["auto"]:
+                self._add_to_cache(self.cached_data["auto"], ck, kw, limit=50)
+            self.check_auto_cache_state()
+
         self.autocomplete_table.setUpdatesEnabled(False)
         self.autocomplete_table.setRowCount(len(kw))
         for r, k in enumerate(kw):
@@ -1464,8 +1749,16 @@ class KeywordApp(QMainWindow):
             self.log_message("WARNING", "자동완성 키워드가 0건입니다.")
 
     def on_naver_main_finished(self, res):
-        self.is_working = False
-        self.set_all_buttons_disabled(False)
+        self._finish_task_state()
+        if res:
+            self.cached_data["main_inflow"] = res
+            self.update_button_style(
+                self.fetch_main_content_button,
+                True,
+                "켜진 창에서 메인 유입콘텐츠 가져오기",
+                "background-color: #28A745; font-weight: bold;",
+            )
+
         self.naver_main_table.setUpdatesEnabled(False)
         self.naver_main_table.setRowCount(len(res))
         for r, it in enumerate(res):
@@ -1479,13 +1772,20 @@ class KeywordApp(QMainWindow):
             self.log_message("WARNING", "메인 유입 데이터가 0건입니다.")
 
     def on_fetch_blog_views_finished(self, data):
-        self.is_working = False
-        self.set_all_buttons_disabled(False)
-        self.progress_bar_bv.setValue(100)
+        self.update_progress_bar(100)
+        self._finish_task_state()
+
+        if data:
+            ck = getattr(self, "current_views_cache_key", None)
+            if ck and ck not in self.cached_data["blog_views"]:
+                self._add_to_cache(self.cached_data["blog_views"], ck, data, limit=30)
+            self.check_views_cache_state()
+
         if not data:
             self.status_label_bv.setText("⚠️ 결과 0건 (또는 권한 필요).")
             self.log_message("WARNING", "블로그 조회수 데이터가 0건입니다.")
             return
+
         self.blog_views_df = pd.DataFrame(data)
         self.status_label_bv.setText(f"✅ {len(data)}개 완료!")
         self.blog_views_table.setUpdatesEnabled(False)
@@ -1520,48 +1820,83 @@ class KeywordApp(QMainWindow):
 
     def copy_trends_to_analyzer(self):
         if self.trend_table.rowCount() > 0:
-            self.analysis_input_widget.setPlainText(
-                "\n".join(
-                    self.trend_table.item(r, 1).text()
-                    for r in range(self.trend_table.rowCount())
-                )
-            )
+            kws = [
+                self.trend_table.item(r, 1).text()
+                for r in range(self.trend_table.rowCount())
+                if not self.trend_table.isRowHidden(r)
+            ]
+            if not kws:
+                self.log_message("WARNING", "복사할 데이터가 없습니다 (필터링 0건).")
+                return
+
+            # [개선 4] 분석 탭에 복사할 때 기존 키워드와 합치면서 중복 100% 제거
+            existing = [
+                x.strip()
+                for x in self.analysis_input_widget.toPlainText().splitlines()
+                if x.strip()
+            ]
+            merged = list(dict.fromkeys(existing + kws))
+
+            self.analysis_input_widget.setPlainText("\n".join(merged))
             self.tabs.setCurrentIndex(1)
-            self.log_message("INFO", "복사 완료.")
+            self.log_message(
+                "INFO", f"중복 제거 후 총 {len(merged)}개 키워드 복사 완료."
+            )
 
     def copy_autocomplete_to_analyzer(self):
-        if (rows := self.autocomplete_table.rowCount()) > 0:
-            kws = "\n".join(
-                self.autocomplete_table.item(r, 0).text() for r in range(rows)
-            )
-            cur = self.analysis_input_widget.toPlainText().strip()
-            self.analysis_input_widget.setPlainText(f"{cur}\n{kws}".strip())
+        rows = self.autocomplete_table.rowCount()
+        if rows > 0:
+            kws = [self.autocomplete_table.item(r, 0).text() for r in range(rows)]
+            existing = [
+                x.strip()
+                for x in self.analysis_input_widget.toPlainText().splitlines()
+                if x.strip()
+            ]
+
+            # [개선 4] 중복 완전 제거
+            merged = list(dict.fromkeys(existing + kws))
+
+            self.analysis_input_widget.setPlainText("\n".join(merged))
             self.tabs.setCurrentIndex(1)
+            self.log_message(
+                "INFO", f"중복 제거 후 총 {len(merged)}개 키워드 복사 완료."
+            )
 
     def export_trends_to_excel(self):
         if self.trend_table.rowCount() == 0:
             return
         os.makedirs("output", exist_ok=True)
-        df = pd.DataFrame(
-            [
-                {
-                    self.trend_table.horizontalHeaderItem(0)
-                    .text(): self.trend_table.item(r, 0)
-                    .text(),
-                    "키워드": self.trend_table.item(r, 1).text(),
-                    "순위": int(self.trend_table.item(r, 2).text()),
-                    "순위변동": self.trend_table.item(r, 3).text(),
-                }
-                for r in range(self.trend_table.rowCount())
-            ]
-        )
+
+        data = []
+        for r in range(self.trend_table.rowCount()):
+            if not self.trend_table.isRowHidden(r):
+                data.append(
+                    {
+                        self.trend_table.horizontalHeaderItem(0)
+                        .text(): self.trend_table.item(r, 0)
+                        .text(),
+                        "키워드": self.trend_table.item(r, 1).text(),
+                        "순위": int(self.trend_table.item(r, 2).text()),
+                        "순위변동": self.trend_table.item(r, 3).text(),
+                    }
+                )
+
+        if not data:
+            QMessageBox.warning(
+                self, "경고", "저장할 데이터가 없습니다 (필터링 결과 0건)."
+            )
+            return
+
+        df = pd.DataFrame(data)
         df.to_excel(
             os.path.join(
                 "output", f"trend_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             ),
             index=False,
         )
-        QMessageBox.information(self, "성공", "저장 완료.")
+        QMessageBox.information(
+            self, "성공", f"현재 화면의 {len(data)}개 데이터 엑셀 저장 완료."
+        )
 
     def export_to_excel(self):
         if getattr(self, "results_df", None) is None or self.results_df.empty:
@@ -1593,7 +1928,6 @@ class KeywordApp(QMainWindow):
     def on_update_error(self, err):
         self.log_message("WARNING", f"업데이트 확인 오류: {err}")
 
-    # [방어 3] 중복 종료 호출 완벽 방지 및 타임아웃 기반 안전 종료
     def closeEvent(self, e):
         if self._closing:
             e.ignore()
@@ -1611,14 +1945,13 @@ class KeywordApp(QMainWindow):
                 return
 
         self._closing = True
-        self.hide()  # 사용자에겐 꺼진 것처럼 보이게 함
+        self.hide()
         e.ignore()
         self.req_close_driver.emit()
 
     @pyqtSlot()
     def final_quit(self):
         self.bg_thread.quit()
-        # [방어 6] 좀비 스레드 무한 대기 방어 (3초 타임아웃)
         if not self.bg_thread.wait(3000):
             print("Background thread did not terminate in time. Forcing quit.")
         QApplication.quit()
