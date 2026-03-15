@@ -13,14 +13,12 @@ def get_resource_path(relative_path):
 
 def get_current_version():
     try:
-        # __file__ 대신 동적 리소스 경로 탐색 함수 사용
         version_file = get_resource_path('version.json')
-        
         with open(version_file, 'r', encoding='utf-8') as f:
             version_info = json.load(f)
             return version_info.get('version', '0.0.0')
-    except Exception as e:
-        print(f"버전 파일 읽기 실패: {e}") # 디버깅을 위한 출력
+    except Exception:
+        # 콘솔 없는 배포 환경(windowed)을 위해 print 문 제거 및 조용한 예외 처리
         return '0.0.0'
 
 class UpdateChecker(QThread):

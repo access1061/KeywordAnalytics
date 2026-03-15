@@ -25,3 +25,7 @@ pyinstaller --onefile --windowed --name KeywordAnalyzerPro --icon=keyword_pro.ic
 ## 3/7일
 
 pyinstaller --onefile --windowed --name KeywordAnalyzerPro --icon=keyword_pro.ico --add-data "keyword_pro.ico;." --add-data "style.qss;." --add-data "version.json;." --hidden-import=xlsxwriter pyqt_app_new.py
+
+## 3/15일
+
+pyinstaller --onefile --windowed --name Keyword_Studio_Pro --icon=studio.ico --add-data "studio.ico;." --add-data "style.qss;." --add-data "version.json;." --hidden-import=xlsxwriter Keyword_Studio_Gemini.py
