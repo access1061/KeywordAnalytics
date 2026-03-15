@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['pyqt_app_new.py'],
+    ['pyqt_app.py'],
     pathex=[],
     binaries=[],
-    datas=[('keyword_pro.ico', '.'), ('style.qss', '.'), ('version.json', '.')],
+    datas=[('keyword_pro.ico', '.'), ('style.qss', '.')],
     hiddenimports=['xlsxwriter'],
     hookspath=[],
     hooksconfig={},

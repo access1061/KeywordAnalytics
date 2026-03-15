@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QPushButton, QLabel, QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QProgressBar, QMessageBox, QLineEdit, QCheckBox, QComboBox, QButtonGroup,
-    QDialog, QCalendarWidget, QGroupBox, QSplitter # ✨ QSplitter 추가
+    QDialog, QCalendarWidget, QGroupBox, QSplitter
 )
 from PyQt6.QtGui import QIcon, QColor, QFont
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QPoint, pyqtSlot
@@ -52,7 +52,6 @@ def get_app_data_path():
         return os.path.join(os.path.expanduser("~/.local/share"), "KeywordStudio")
 
 def load_stylesheet():
-    # ✨ 모던 SaaS 스타일 QSS (프로그레스 바 및 스플리터 최적화)
     base_qss = """
         * { 
             font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; 
@@ -112,7 +111,6 @@ def load_stylesheet():
         }
         QTableWidget::item { border-bottom: 1px solid #F1F3F5; padding: 5px; }
 
-        /* ✨ 프로그레스 바 수정 (글자 보이게, 두께 조절) */
         QProgressBar { 
             border: 1px solid #CED4DA; background-color: #F8F9FA; border-radius: 6px; 
             text-align: center; color: #495057; font-weight: bold; min-height: 18px; 
@@ -121,7 +119,6 @@ def load_stylesheet():
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4FACFE, stop:1 #00F2FE); border-radius: 5px; 
         }
 
-        /* ✨ 스플리터(구분선) 스타일 */
         QSplitter::handle { background-color: #DEE2E6; margin: 2px; border-radius: 2px; }
         QSplitter::handle:horizontal { width: 4px; }
         QSplitter::handle:vertical { height: 4px; }
@@ -149,9 +146,6 @@ class ApiCallError(Exception):
         self.status_code = status_code
         self.original_exception = original_exception
 
-# -----------------------------------------------------------------------------------------------------------------
-# 캐시 매니저 (L1 Memory + L2 SQLite)
-# -----------------------------------------------------------------------------------------------------------------
 class KeywordCacheManager:
     def __init__(self, db_dir):
         os.makedirs(db_dir, exist_ok=True)
@@ -250,9 +244,6 @@ class KeywordCacheManager:
         existing = self.l1_cache.get(keyword, {})
         self.l1_cache[keyword] = {"pc": int(existing.get("pc", 0)), "mobile": int(existing.get("mobile", 0)), "post_count": int(post_count), "search_updated_at": existing.get("search_updated_at"), "doc_updated_at": now}
 
-# -----------------------------------------------------------------------------------------------------------------
-# API Helpers
-# -----------------------------------------------------------------------------------------------------------------
 def get_naver_ad_keywords(keyword, api_key, secret_key, customer_id, session=None):
     if not all([api_key, secret_key, customer_id]): raise ValueError("광고 API 키가 설정되지 않았습니다.")
     signature_generator = Signature()
@@ -285,9 +276,6 @@ def get_blog_post_count(keyword, client_id, client_secret, session=None):
     except Exception as e:
         raise ApiCallError(f"블로그 검색 API 호출 실패: {e}", original_exception=e) from e
 
-# -----------------------------------------------------------------------------------------------------------------
-# UI Widgets
-# -----------------------------------------------------------------------------------------------------------------
 class MonthPickerDialog(QDialog):
     month_selected = pyqtSignal(QDate)
     def __init__(self, current_date, parent=None):
@@ -332,9 +320,6 @@ class WeeklyCalendarWidget(QCalendarWidget):
             if self.selected_week_start <= date <= self.selected_week_start.addDays(6):
                 painter.setBrush(QColor(220, 235, 255, 100)); painter.setPen(Qt.PenStyle.NoPen); painter.drawRect(rect)
 
-# -----------------------------------------------------------------------------------------------------------------
-# BackgroundWorker (스레드 분리)
-# -----------------------------------------------------------------------------------------------------------------
 class BackgroundWorker(QObject):
     log = pyqtSignal(str, str)
     progress = pyqtSignal(int)
@@ -527,7 +512,6 @@ class BackgroundWorker(QObject):
             self.blog_views_done.emit(all_view)
         except Exception as e: self.error.emit(f"수집 실패: {e}")
 
-    # 백오프(Backoff) 처리
     def _safe_pause_after_api_call(self): time.sleep(random.uniform(0.2, 0.45))
     def _backoff_sleep(self, attempt, base_seconds, cap_seconds):
         wait = min(cap_seconds, base_seconds * (2 ** attempt)) + random.uniform(0.15, 0.6)
@@ -691,9 +675,6 @@ class BackgroundWorker(QObject):
         self.driver_closed.emit()
 
 
-# -----------------------------------------------------------------------------------------------------------------
-# 메인 GUI 앱 (Keyword Studio)
-# -----------------------------------------------------------------------------------------------------------------
 class KeywordApp(QMainWindow):
     req_open_browser = pyqtSignal()
     req_fetch_trends = pyqtSignal()
@@ -730,7 +711,6 @@ class KeywordApp(QMainWindow):
         self.update_checker.error_occurred.connect(self.on_update_error)
         self.update_checker.start()
 
-        # 창 크기를 모니터에 맞게 약간 조정
         self.setGeometry(100, 100, 1200, 800)
         self.setStyleSheet(load_stylesheet())
 
@@ -758,10 +738,8 @@ class KeywordApp(QMainWindow):
         top_level_layout = QVBoxLayout(central_widget)
         top_level_layout.setContentsMargins(10, 10, 10, 10)
 
-        # 상단 설정 바
         self.create_settings_bar(top_level_layout)
 
-        # ✨ 전역 수직 스플리터 (메인 탭 vs 실시간 로그)
         self.global_splitter = QSplitter(Qt.Orientation.Vertical)
         top_level_layout.addWidget(self.global_splitter)
 
@@ -783,7 +761,6 @@ class KeywordApp(QMainWindow):
         log_layout.addWidget(self.log_widget)
         self.global_splitter.addWidget(log_group_box)
         
-        # 스플리터 초기 비율 설정 (탭 80%, 로그 20%)
         self.global_splitter.setSizes([600, 200])
 
         self.bg_thread = QThread()
@@ -913,7 +890,6 @@ class KeywordApp(QMainWindow):
         settings_layout.addWidget(self.auth_button)
         parent_layout.addWidget(settings_frame)
 
-    # ✨ 탭 생성 (좌우 스플릿 구조 적용)
     def create_trend_fetch_tab(self):
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
@@ -949,7 +925,7 @@ class KeywordApp(QMainWindow):
         left_layout.addWidget(self.copy_to_analyzer_button)
         left_layout.addWidget(self.ai_copy_button)
         left_layout.addWidget(self.export_trends_excel_button)
-        left_layout.addStretch() # 버튼들을 위로 밀어올림
+        left_layout.addStretch()
 
         self.status_label_fetch = QLabel("먼저 [브라우저 열기]를 눌러 로그인 후 수집을 시작하세요.")
         self.status_label_fetch.setWordWrap(True)
@@ -999,14 +975,22 @@ class KeywordApp(QMainWindow):
 
         self.analyze_button = QPushButton("기회지수 분석 시작")
         self.analyze_button.setObjectName("primaryBtn")
+        
+        # ✨ 엑셀 저장 관련 UI를 수평으로 배치
+        export_layout = QHBoxLayout()
+        self.export_include_normal_cb = QCheckBox("'일반' 포함")
+        self.export_include_normal_cb.setToolTip("체크 시 기회지수가 낮은 '일반' 키워드도 엑셀에 함께 저장됩니다.")
         self.export_excel_button = QPushButton("엑셀로 저장")
         self.export_excel_button.setDisabled(True)
+        export_layout.addWidget(self.export_include_normal_cb)
+        export_layout.addWidget(self.export_excel_button)
+
         self.progress_bar_analysis = QProgressBar()
         self.progress_bar_analysis.setFormat("진행률: %p%")
         
         left_layout.addWidget(self.analysis_input_widget, stretch=1)
         left_layout.addWidget(self.analyze_button)
-        left_layout.addWidget(self.export_excel_button)
+        left_layout.addLayout(export_layout) # 변경된 Layout 삽입
         left_layout.addWidget(self.progress_bar_analysis)
 
         right_panel = QWidget()
@@ -1130,7 +1114,6 @@ class KeywordApp(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 10, 0)
         
-        # 날짜 조절
         date_nav_layout = QHBoxLayout()
         self.bv_prev_btn = QPushButton("<")
         self.bv_date_label = QLabel("")
@@ -1268,8 +1251,12 @@ class KeywordApp(QMainWindow):
         self.progress_bar_fetch.setValue(0)
         self.analysis_input_widget.clear()
         self.result_table.setRowCount(0)
+        
+        # ✨ 상태 동기화 추가
         self.progress_bar_analysis.setValue(0)
         self.export_excel_button.setDisabled(True)
+        self.export_include_normal_cb.setChecked(False) 
+        
         self.autocomplete_input.clear()
         self.autocomplete_table.setRowCount(0)
         self.cb_naver.setChecked(True); self.cb_daum.setChecked(True); self.cb_google.setChecked(True)
@@ -1538,7 +1525,6 @@ class KeywordApp(QMainWindow):
             if search_text and search_text not in kwd_text: hide_row = True
             self.trend_table.setRowHidden(row, hide_row)
 
-    # ✨ AI 스마트 추출 시작 트리거
     def start_ai_copy(self):
         if self.is_working: return
         if self.trend_table.rowCount() == 0: return
@@ -1552,7 +1538,6 @@ class KeywordApp(QMainWindow):
         self.set_all_buttons_disabled(True)
         self.req_ai_extract.emit(kws, self.API_KEYS["gemini_key"], self.API_KEYS["gemini_model"])
 
-    # ✨ AI 추출 완료 슬롯
     @pyqtSlot(list)
     def on_ai_extract_done(self, extracted_keywords):
         self._finish_task_state()
@@ -1563,7 +1548,7 @@ class KeywordApp(QMainWindow):
         existing = [x.strip() for x in self.analysis_input_widget.toPlainText().splitlines() if x.strip()]
         merged = list(dict.fromkeys(existing + extracted_keywords))
         self.analysis_input_widget.setPlainText("\n".join(merged))
-        self.tabs.setCurrentIndex(1) # 분석 탭으로 자동 이동
+        self.tabs.setCurrentIndex(1)
         self.log_message("SUCCESS", f"✨ AI가 총 {len(extracted_keywords)}개의 고가치 키워드를 추출하여 복사했습니다!")
 
     def on_analysis_finished(self, df):
@@ -1697,11 +1682,59 @@ class KeywordApp(QMainWindow):
         df.to_excel(os.path.join("output", f"trend_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False)
         QMessageBox.information(self, "성공", f"현재 화면의 {len(data)}개 데이터 엑셀 저장 완료.")
 
+    # ✨ xlsxwriter를 활용한 자동 서식 지정 및 파일 잠금 예외 처리 적용
     def export_to_excel(self):
         if getattr(self, "results_df", None) is None or self.results_df.empty: return
         os.makedirs("output", exist_ok=True)
-        self.results_df[self.results_df["분류"] != "일반"].to_excel(os.path.join("output", f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False)
-        QMessageBox.information(self, "성공", "저장 완료.")
+        
+        # 체크박스 상태에 따라 DataFrame 준비
+        if self.export_include_normal_cb.isChecked():
+            export_df = self.results_df
+        else:
+            export_df = self.results_df[self.results_df["분류"] != "일반"]
+
+        if export_df.empty:
+            QMessageBox.warning(self, "경고", "저장할 데이터가 없습니다 ('일반' 제외 후 0건).")
+            return
+            
+        file_path = os.path.join("output", f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+        
+        try:
+            # xlsxwriter 엔진을 이용해 엑셀 기록
+            writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
+            export_df.to_excel(writer, index=False, sheet_name='분석결과')
+            
+            workbook = writer.book
+            worksheet = writer.sheets['분석결과']
+            
+            # 서식(Style) 포맷 지정
+            header_format = workbook.add_format({
+                'bold': True, 'text_wrap': True, 'valign': 'top',
+                'fg_color': '#D7E4BC', 'border': 1
+            })
+            num_format = workbook.add_format({'num_format': '#,##0'})
+            float_format = workbook.add_format({'num_format': '#,##0.00'})
+            
+            # 1행(헤더)에 서식 적용
+            for col_num, value in enumerate(export_df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+                
+            # 열 너비 및 데이터 포맷 적용
+            worksheet.set_column('A:A', 12)                 # 분류
+            worksheet.set_column('B:B', 30)                 # 정제된 키워드
+            worksheet.set_column('C:D', 15, num_format)     # 총검색량, 총문서수 (콤마 적용)
+            worksheet.set_column('E:E', 15, float_format)   # 기회지수 (소수점 2자리 적용)
+            
+            writer.close()
+            QMessageBox.information(self, "성공", f"총 {len(export_df)}개의 데이터가 서식이 적용된 엑셀로 저장되었습니다.")
+            self.log_message("SUCCESS", f"엑셀 저장 완료 (포함된 행: {len(export_df)}개)")
+            
+        except PermissionError:
+            self.log_message("ERROR", "엑셀 파일 저장 실패 (파일 열림 에러)")
+            QMessageBox.critical(self, "저장 실패", "해당 이름의 엑셀 파일이 이미 다른 프로그램에서 열려있습니다. 닫고 다시 시도해주세요.")
+        except Exception as e:
+            self.log_message("ERROR", f"엑셀 저장 중 알 수 없는 오류: {e}")
+            QMessageBox.critical(self, "오류", f"엑셀 저장 중 오류가 발생했습니다:\n{e}")
 
     def export_blog_views_to_excel(self):
         if getattr(self, "blog_views_df", None) is None or self.blog_views_df.empty: return
