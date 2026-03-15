@@ -12,14 +12,13 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 from update_checker import UpdateChecker, get_current_version
-
-# [방어 확인] ET 임포트 정상 유지
 import xml.etree.ElementTree as ET
-
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
+# ▼▼▼ [수정] webdriver-manager를 다시 사용합니다 ▼▼▼
 from webdriver_manager.chrome import ChromeDriverManager
-from multiprocessing import freeze_support
+from selenium.webdriver.support.ui import WebDriverWait
+from multiprocessing import Process, Queue, freeze_support
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -51,13 +50,15 @@ from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QPoint, QTimer
 
 
 def resource_path(relative_path):
-    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_path, relative_path)
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 
 def load_stylesheet():
     try:
         with open(resource_path("style.qss"), "r", encoding="utf-8") as f:
-            return base_qss + f.read()
+            return f.read()
     except FileNotFoundError:
         return ""
 
@@ -141,7 +142,7 @@ def get_naver_ad_keywords(
 
 def get_blog_post_count(keyword: str, client_id: str, client_secret: str):
     if not all([client_id, client_secret]):
-        raise ValueError("검색 API 키가 설정되지 않았습니다.")
+        raise ValueError("검색 API 키가 없습니다.")
     url = f"https://openapi.naver.com/v1/search/blog?query={quote(keyword)}"
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
     response = requests.get(url, headers=headers)
@@ -192,6 +193,7 @@ class WeeklyCalendarWidget(QCalendarWidget):
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawRect(rect)
 
+
 class MonthPickerDialog(QDialog):
     month_selected = pyqtSignal(QDate)
 
@@ -224,10 +226,12 @@ class MonthPickerDialog(QDialog):
         self.next_year_btn.clicked.connect(self.next_year)
 
     def prev_year(self):
-        self.current_year -= 1; self.year_label.setText(str(self.current_year))
+        self.current_year -= 1
+        self.year_label.setText(str(self.current_year))
 
     def next_year(self):
-        self.current_year += 1; self.year_label.setText(str(self.current_year))
+        self.current_year += 1
+        self.year_label.setText(str(self.current_year))
 
     def select_month(self, month):
         self.month_selected.emit(QDate(self.current_year, month, 1))
@@ -273,22 +277,10 @@ class KeywordApp(QMainWindow):
         super().__init__()
         self.current_version = get_current_version()
         self.setWindowTitle(f"키워드 분석기 Pro v{self.current_version}")
-
-        self.is_working = False
-        self._closing = False  # [방어 3] 중복 종료 호출 방지 플래그
-        self.current_task = ""
-
-        self.all_trend_data = []
-        self.rank_sort_order = Qt.SortOrder.DescendingOrder
-        self.currently_displayed_data = []
-        self.bv_current_date = QDate.currentDate()
-        self.bv_calendar_popup = None
-
         self.update_checker = UpdateChecker(self.current_version)
         self.update_checker.update_available.connect(self.on_update_available)
         self.update_checker.error_occurred.connect(self.on_update_error)
         self.update_checker.start()
-
         self.setGeometry(100, 100, 1100, 800)
         self.setStyleSheet(load_stylesheet())
         load_dotenv("api.env")
@@ -328,85 +320,36 @@ class KeywordApp(QMainWindow):
         self.create_naver_main_tab()
         self.create_blog_views_tab()
         log_group_box = QGroupBox("📜 실시간 로그")
+        log_group_box.setStyleSheet(
+            """
+            QGroupBox { font-size: 9pt; font-weight: light; border: 1px solid #D0D0D0;
+                        border-radius: 5px; margin-top: 12px; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left;
+                               padding: 0 5px 0 5px; left: 10px; }
+        """
+        )
         log_layout = QVBoxLayout(log_group_box)
         log_layout.setContentsMargins(8, 8, 8, 8)
         self.log_widget = QTextEdit()
         self.log_widget.setReadOnly(True)
+        self.log_widget.setObjectName("LogWindow")
         self.log_widget.setMinimumHeight(100)
+        self.log_widget.setStyleSheet(
+            """
+            QTextEdit#LogWindow { background-color: #2E2E2E; color: #F0F0F0;
+                                  border: 1px solid #4A4A4A; border-radius: 4px; padding: 5px;
+                                  font-family: "Malgun Gothic", sans-serif; }
+        """
+        )
         log_layout.addWidget(self.log_widget)
         top_level_layout.addWidget(log_group_box)
-
-        self.bg_thread = QThread()
-        self.bg_worker = BackgroundWorker()
-        self.bg_worker.moveToThread(self.bg_thread)
-
-        self.req_open_browser.connect(self.bg_worker.open_browser)
-        self.req_fetch_trends.connect(self.bg_worker.fetch_trends)
-        self.req_fetch_age_trends.connect(self.bg_worker.fetch_age_trends)
-        self.req_fetch_main.connect(self.bg_worker.fetch_naver_main)
-        self.req_fetch_views.connect(self.bg_worker.fetch_blog_views)
-        self.req_fetch_analysis.connect(self.bg_worker.fetch_analysis)
-        self.req_fetch_autocomplete.connect(self.bg_worker.fetch_autocomplete)
-        self.req_close_driver.connect(self.bg_worker.close_driver)
-
-        self.bg_worker.log.connect(self.log_message)
-        self.bg_worker.progress.connect(self.update_progress_bar)
-        self.bg_worker.error.connect(self.on_worker_error)
-
-        self.bg_worker.browser_opened.connect(self.on_browser_opened)
-
-        # [방어 3] 프로그램 종료 핸드셰이크 시그널을 미리 1번만 연결
-        self.bg_worker.driver_closed.connect(self.final_quit)
-
-        self.bg_worker.trends_done.connect(self.on_trend_fetching_finished)
-        self.bg_worker.age_trends_done.connect(self.on_age_trend_fetching_finished)
-        self.bg_worker.main_inflow_done.connect(self.on_naver_main_finished)
-        self.bg_worker.blog_views_done.connect(self.on_fetch_blog_views_finished)
-        self.bg_worker.analysis_done.connect(self.on_analysis_finished)
-        self.bg_worker.autocomplete_done.connect(self.on_autocomplete_finished)
-
-        self.bg_thread.start()
-
-    def set_all_buttons_disabled(self, disabled):
-        self.auth_button.setDisabled(disabled)
-        self.fetch_trends_button.setDisabled(disabled)
-        self.fetch_age_trends_button.setDisabled(disabled)
-        self.fetch_main_content_button.setDisabled(disabled)
-        self.fetch_blog_views_button.setDisabled(disabled)
-        self.analyze_button.setDisabled(disabled)
-        self.autocomplete_search_button.setDisabled(disabled)
-
-    def update_progress_bar(self, val):
-        if self.current_task in ["trends", "age"]:
-            self.progress_bar_fetch.setValue(val)
-        elif self.current_task == "analysis":
-            self.progress_bar_analysis.setValue(val)
-        elif self.current_task == "views":
-            self.progress_bar_bv.setValue(val)
-
-    def log_message(self, level, msg):
-        if self.log_widget.document().blockCount() > 1000:
-            cursor = self.log_widget.textCursor()
-            cursor.movePosition(cursor.MoveOperation.Start)
-            cursor.select(cursor.SelectionType.BlockUnderCursor)
-            cursor.removeSelectedText()
-            cursor.deleteChar()
-
-        c = {
-            "INFO": "#82C0FF",
-            "SUCCESS": "#28A745",
-            "WARNING": "orange",
-            "ERROR": "#DC3545",
-        }.get(level, "#E0E0E0")
-        self.log_widget.append(
-            f'<font color="{c}">[{datetime.now().strftime("%H:%M:%S")}] - {level} - {msg}</font>'
-        )
 
     def create_settings_bar(self, parent_layout):
         settings_frame = QWidget()
         settings_layout = QHBoxLayout(settings_frame)
         settings_layout.setContentsMargins(0, 0, 0, 0)
         self.reset_button = QPushButton("화면 초기화")
+        self.reset_button.setObjectName("ResetButton")
         self.reset_button.clicked.connect(self.reset_ui)
         self.auth_button = QPushButton("인증 정보 갱신 (로그인)")
         self.auth_button.setObjectName("AuthButton")
@@ -435,7 +378,6 @@ class KeywordApp(QMainWindow):
         self.copy_to_analyzer_button.setDisabled(True)
         self.category_filter_combo.setDisabled(True)
         self.export_trends_excel_button.setDisabled(True)
-        
         control_layout.addWidget(self.fetch_trends_button)
         control_layout.addWidget(self.fetch_age_trends_button)
         control_layout.addWidget(self.copy_to_analyzer_button)
@@ -453,7 +395,6 @@ class KeywordApp(QMainWindow):
         status_layout.addWidget(self.status_label_fetch)
         status_layout.addWidget(self.progress_bar_fetch)
         control_layout.addWidget(status_container)
-        
         self.trend_table = QTableWidget()
         headers = ["카테고리", "키워드", "순위변동"]
         self.trend_table.setColumnCount(len(headers))
@@ -463,7 +404,6 @@ class KeywordApp(QMainWindow):
         layout.addWidget(control_widget)
         layout.addWidget(self.trend_table)
         self.tabs.addTab(tab, "트렌드 키워드 수집")
-        
         self.fetch_trends_button.clicked.connect(self.start_trend_fetching)
         self.fetch_age_trends_button.clicked.connect(self.start_age_trend_fetching)
         self.copy_to_analyzer_button.clicked.connect(self.copy_trends_to_analyzer)
@@ -473,10 +413,13 @@ class KeywordApp(QMainWindow):
     def create_analysis_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        placeholder_text = "--- 키워드를 입력하거나 붙여넣어 주세요 (한 줄에 하나씩) ---\n\n💡 '기회 지수'란?\n'월간 총검색량 ÷ 블로그 총문서수'로 계산되는 값으로,\n문서(공급) 대비 검색량(수요)이 얼마나 높은지를 나타내는 지표입니다."
+        placeholder_text = """--- 키워드를 입력하거나 붙여넣어 주세요 (한 줄에 하나씩) ---
+
+💡 '기회 지수'란?
+'월간 총검색량 ÷ 블로그 총문서수'로 계산되는 값으로,
+문서(공급) 대비 검색량(수요)이 얼마나 높은지를 나타내는 지표입니다."""
         self.analysis_input_widget = QTextEdit()
         self.analysis_input_widget.setPlaceholderText(placeholder_text)
-        
         control_layout = QHBoxLayout()
         self.analyze_button = QPushButton("기회지수 분석 시작")
         self.analyze_button.setObjectName("AnalyzeButton")
@@ -499,15 +442,14 @@ class KeywordApp(QMainWindow):
         layout.addLayout(control_layout)
         layout.addWidget(self.result_table, 3)
         self.tabs.addTab(tab, "기회지수 분석")
-        
         self.analyze_button.clicked.connect(self.start_competition_analysis)
         self.export_excel_button.clicked.connect(self.export_to_excel)
 
     def create_autocomplete_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        top_control_layout = QVBoxLayout(); top_control_layout.setContentsMargins(0, 0, 0, 10)
-        
+        top_control_layout = QVBoxLayout()
+        top_control_layout.setContentsMargins(0, 0, 0, 10)
         input_layout = QHBoxLayout()
         self.autocomplete_input = QLineEdit()
         self.autocomplete_input.setPlaceholderText("자동완성 키워드를 검색할 단어를 입력하세요...")
@@ -516,13 +458,19 @@ class KeywordApp(QMainWindow):
         checkbox_layout = QHBoxLayout()
         checkbox_layout.setContentsMargins(10, 5, 0, 5)
         checkbox_layout.addWidget(QLabel("검색 엔진:"), 0)
-        self.cb_naver = QCheckBox("네이버"); self.cb_daum = QCheckBox("Daum"); self.cb_google = QCheckBox("Google")
-        self.cb_naver.setChecked(True); self.cb_daum.setChecked(True); self.cb_google.setChecked(True)
-        checkbox_layout.addWidget(self.cb_naver); checkbox_layout.addWidget(self.cb_daum); checkbox_layout.addWidget(self.cb_google)
+        self.cb_naver = QCheckBox("네이버")
+        self.cb_daum = QCheckBox("Daum")
+        self.cb_google = QCheckBox("Google")
+        self.cb_naver.setChecked(True)
+        self.cb_daum.setChecked(True)
+        self.cb_google.setChecked(True)
+        checkbox_layout.addWidget(self.cb_naver)
+        checkbox_layout.addWidget(self.cb_daum)
+        checkbox_layout.addWidget(self.cb_google)
         checkbox_layout.addStretch()
-        
         button_layout = QHBoxLayout()
         self.autocomplete_search_button = QPushButton("자동완성 검색")
+        self.autocomplete_search_button.setObjectName("AutocompleteSearchButton")
         self.autocomplete_copy_button = QPushButton("키워드 → 분석 탭으로 복사")
         self.autocomplete_copy_button.setObjectName("AutocompleteCopyButton")
         button_layout.addWidget(self.autocomplete_search_button)
@@ -539,12 +487,9 @@ class KeywordApp(QMainWindow):
         layout.addLayout(top_control_layout)
         layout.addWidget(self.autocomplete_table)
         self.tabs.addTab(tab, "자동완성 키워드 수집")
-        
         self.autocomplete_search_button.clicked.connect(self.start_autocomplete_search)
         self.autocomplete_input.returnPressed.connect(self.start_autocomplete_search)
-        self.autocomplete_copy_button.clicked.connect(
-            self.copy_autocomplete_to_analyzer
-        )
+        self.autocomplete_copy_button.clicked.connect(self.copy_autocomplete_to_analyzer)
 
     def create_naver_main_tab(self):
         tab = QWidget()
@@ -562,28 +507,28 @@ class KeywordApp(QMainWindow):
         self.naver_main_table.setColumnCount(len(headers))
         self.naver_main_table.setHorizontalHeaderLabels(headers)
         self.naver_main_table.verticalHeader().setVisible(False)
-        self.naver_main_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.naver_main_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
+        self.naver_main_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.naver_main_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.naver_main_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        
-        layout.addLayout(control_layout); layout.addWidget(self.naver_main_table)
+        layout.addLayout(control_layout)
+        layout.addWidget(self.naver_main_table)
         self.tabs.addTab(tab, "네이버 메인 유입 콘텐츠")
-        
         self.fetch_main_content_button.clicked.connect(self.start_fetch_naver_main)
         self.naver_main_table.cellDoubleClicked.connect(self.open_browser_link)
 
     def create_blog_views_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        top_control_layout = QHBoxLayout(); top_control_layout.setContentsMargins(0, 0, 0, 10)
-        self.bv_prev_btn = QPushButton("<"); self.bv_date_label = QLabel(""); self.bv_date_label.setFont(QFont("Arial", 10))
-        self.bv_calendar_btn = QPushButton("📅"); self.bv_next_btn = QPushButton(">")
-        self.bv_prev_btn.setFixedSize(30, 30); self.bv_next_btn.setFixedSize(30, 30); self.bv_calendar_btn.setFixedSize(30, 30)
-        
+        top_control_layout = QHBoxLayout()
+        top_control_layout.setContentsMargins(0, 0, 0, 10)
+        self.bv_prev_btn = QPushButton("<")
+        self.bv_date_label = QLabel("")
+        self.bv_date_label.setFont(QFont("Arial", 10))
+        self.bv_calendar_btn = QPushButton("📅")
+        self.bv_next_btn = QPushButton(">")
+        self.bv_prev_btn.setFixedSize(30, 30)
+        self.bv_next_btn.setFixedSize(30, 30)
+        self.bv_calendar_btn.setFixedSize(30, 30)
         self.bv_mode_group = QButtonGroup(self)
         self.bv_radio_daily = QPushButton("일간")
         self.bv_radio_weekly = QPushButton("주간")
@@ -621,8 +566,10 @@ class KeywordApp(QMainWindow):
         status_layout = QVBoxLayout(status_container)
         status_layout.setContentsMargins(0, 0, 0, 0)
         self.status_label_bv = QLabel("조회할 기간을 선택하고 버튼을 눌러주세요.")
-        self.progress_bar_bv = QProgressBar(); self.progress_bar_bv.setFormat("진행률: %p%")
-        status_layout.addWidget(self.status_label_bv); status_layout.addWidget(self.progress_bar_bv)
+        self.progress_bar_bv = QProgressBar()
+        self.progress_bar_bv.setFormat("진행률: %p%")
+        status_layout.addWidget(self.status_label_bv)
+        status_layout.addWidget(self.progress_bar_bv)
         bottom_control_layout.addWidget(status_container)
         layout.addLayout(top_control_layout)
         layout.addLayout(bottom_control_layout)
@@ -635,7 +582,8 @@ class KeywordApp(QMainWindow):
         self.fetch_blog_views_button.clicked.connect(self.start_fetch_blog_views)
         self.export_blog_views_button.clicked.connect(self.export_blog_views_to_excel)
         self.blog_views_table.cellDoubleClicked.connect(self.open_blog_view_link)
-        self.bv_radio_daily.setChecked(True); self.bv_on_mode_changed()
+        self.bv_radio_daily.setChecked(True)
+        self.bv_on_mode_changed()
 
     def bv_on_mode_changed(self):
         checked_id = self.bv_mode_group.checkedId()
@@ -670,7 +618,8 @@ class KeywordApp(QMainWindow):
         self.bv_update_date_display()
 
     def bv_show_calendar_picker(self):
-        if self.bv_mode_group.checkedId() == 2:
+        checked_id = self.bv_mode_group.checkedId()
+        if checked_id == 2:
             dialog = MonthPickerDialog(self.bv_current_date, self)
             dialog.month_selected.connect(self.bv_on_date_selected)
             dialog.exec()
@@ -698,6 +647,7 @@ class KeywordApp(QMainWindow):
         self.export_trends_excel_button.setDisabled(True)
         self.copy_to_analyzer_button.setDisabled(True)
         self.rank_sort_order = Qt.SortOrder.DescendingOrder
+        self.trend_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         self.trend_table.horizontalHeader().setSortIndicatorShown(False)
         self.status_label_fetch.setText("버튼을 눌러 트렌드 키워드 수집을 시작하세요.")
         self.progress_bar_fetch.setValue(0)
@@ -1288,7 +1238,9 @@ class KeywordApp(QMainWindow):
             keywords = [self.trend_table.item(row, 1).text() for row in range(self.trend_table.rowCount())]
             self.analysis_input_widget.setPlainText("\n".join(keywords))
             self.tabs.setCurrentIndex(1)
-            self.log_message("INFO", "복사 완료.")
+            self.log_message("INFO", f"{len(keywords)}개 키워드를 분석 탭으로 복사했습니다.")
+        else:
+            QMessageBox.information(self, "알림", "먼저 트렌드 키워드를 가져와주세요.")
 
     def copy_autocomplete_to_analyzer(self):
         if (rows := self.autocomplete_table.rowCount()) > 0:
@@ -1298,6 +1250,21 @@ class KeywordApp(QMainWindow):
             final_text = f"{current_text}\n{new_text}" if current_text else new_text
             self.analysis_input_widget.setPlainText(final_text.strip())
             self.tabs.setCurrentIndex(1)
+            self.log_message("INFO", f"{len(keywords)}개 키워드를 분석 탭으로 복사했습니다.")
+        else:
+            QMessageBox.information(self, "알림", "먼저 자동완성 키워드를 검색해주세요.")
+
+    def update_result_table(self, df):
+        self.result_table.setRowCount(len(df))
+        headers = ["분류", "키워드", "총검색량", "총문서수", "기회지수"]
+        self.result_table.setHorizontalHeaderLabels(headers)
+        for row_idx, row_data in enumerate(df.itertuples()):
+            self.result_table.setItem(row_idx, 0, QTableWidgetItem(str(row_data.분류)))
+            self.result_table.setItem(row_idx, 1, QTableWidgetItem(str(row_data.키워드)))
+            self.result_table.setItem(row_idx, 2, QTableWidgetItem(f"{row_data.총검색량:,}"))
+            self.result_table.setItem(row_idx, 3, QTableWidgetItem(f"{row_data.총문서수:,}"))
+            self.result_table.setItem(row_idx, 4, QTableWidgetItem(f"{row_data.기회지수:,}"))
+        self.result_table.resizeColumnsToContents()
 
     def export_trends_to_excel(self):
         if self.trend_table.rowCount() == 0:
@@ -1400,7 +1367,9 @@ class KeywordApp(QMainWindow):
 
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
     freeze_support()
+
     app = QApplication(sys.argv)
     window = KeywordApp()
     window.show()

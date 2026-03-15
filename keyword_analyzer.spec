@@ -1,8 +1,10 @@
+# keyword_analyzer.spec
+
 # -*- mode: python ; coding: utf-8 -*-
 import os
 import sys
-
-# 상단의 불필요한 selenium import 제거
+# [수정] 호환성 오류를 일으키는 import 라인을 삭제합니다.
+# from PyInstaller.utils.hooks import get_qt_plugins_paths
 
 block_cipher = None
 
@@ -10,16 +12,24 @@ a = Analysis(
     ['pyqt_app_new.py'],
     pathex=[],
     binaries=[],
+    # ▼▼▼ [수정] datas 섹션에서 get_qt_plugins_paths 호출을 제거합니다 ▼▼▼
     datas=[
         ('version.json', '.'),
         ('style.qss', '.'),
         ('keyword_pro.ico', '.'),
-        ('api.env', '.'),
-        ('update_checker.py', '.')  # [수정] update_checker.py 파일 포함
-        # ('chrome_utils.py', '.') # [수정] 더 이상 사용하지 않으므로 제거
     ],
-    # [수정] selenium과 webdriver_manager 추가
-    hiddenimports=['PyQt6', 'pandas', 'requests', 'python-dotenv', 'selenium', 'webdriver_manager'],
+    # ▲▲▲ [수정] 여기까지 교체 ▲▲▲
+    hiddenimports=[
+        'PyQt6',
+        'pandas',
+        'numpy',
+        'requests',
+        'selenium',
+        'webdriver_manager',
+        'packaging',
+        'cryptography',
+        'xlsxwriter'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

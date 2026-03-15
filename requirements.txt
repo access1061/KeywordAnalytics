@@ -1,9 +1,9 @@
+# requirements.txt
+
 PyQt6
 pandas
 requests
-python-dotenv
 selenium
 webdriver-manager
 XlsxWriter
-update-checker
 cryptography>=42.0.0
