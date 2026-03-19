@@ -1,6 +1,6 @@
 {
-    "version": "2.1.1",
-    "last_updated": "2025-08-30",
+    "version": "3.0.0",
+    "last_updated": "2026-03-07",
     "changes": [
         "인증 시스템 개선",
         "자동 재인증 기능 추가",
