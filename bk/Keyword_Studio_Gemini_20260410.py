@@ -2,7 +2,6 @@ import sys
 import os
 import time
 import json
-import re
 import hashlib
 import hmac
 import base64
@@ -22,7 +21,6 @@ from update_checker import UpdateChecker, get_current_version
 import xml.etree.ElementTree as ET
 
 from selenium import webdriver
-from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.service import Service as ChromeService
 from webdriver_manager.chrome import ChromeDriverManager
 from multiprocessing import freeze_support
@@ -38,7 +36,7 @@ from PyQt6.QtWidgets import (
     QDialog, QCalendarWidget, QGroupBox, QSplitter
 )
 from PyQt6.QtGui import QIcon, QColor, QFont
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QPoint, pyqtSlot, QSettings
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QPoint, pyqtSlot
 
 
 def resource_path(relative_path):
@@ -52,12 +50,6 @@ def get_app_data_path():
         return os.path.join(os.path.expanduser("~/Library/Application Support"), "KeywordStudio")
     else:
         return os.path.join(os.path.expanduser("~/.local/share"), "KeywordStudio")
-
-def clean_display_text(value):
-    text = str(value or "")
-    text = re.sub(r"[^\w\s가-힣]", " ", text)
-    text = re.sub(r"_+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
 
 def load_stylesheet():
     base_qss = """
@@ -408,55 +400,27 @@ class BackgroundWorker(QObject):
 
     @pyqtSlot()
     def open_browser(self):
-        login_url = "https://nid.naver.com/nidlogin.login?url=https://creator-advisor.naver.com/"
-
         try:
             if self.driver:
                 self.driver.current_url
                 self.driver.get("https://creator-advisor.naver.com/")
                 self.log.emit("INFO", "이미 열려있는 브라우저를 사용합니다.")
-                try:
-                    while "nid.naver.com" in self.driver.current_url:
-                        time.sleep(1)
-                except WebDriverException:
-                    self.driver = None
-                    self.error.emit("로그인 대기 중 브라우저가 닫혔습니다.")
-                    return
                 self.browser_opened.emit()
                 return
-        except Exception:
-            self.driver = None
+        except Exception: pass
 
         self.log.emit("INFO", "🌐 네이버 전용 브라우저를 엽니다...")
         try:
             service = ChromeService(ChromeDriverManager().install())
             options = webdriver.ChromeOptions()
-            options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
-            options.add_experimental_option("useAutomationExtension", False)
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--start-maximized")
-            options.add_argument("--lang=ko-KR")
+            options.add_experimental_option("excludeSwitches", ["enable-logging"])
             options.add_argument("--disable-gpu"); options.add_argument("--no-sandbox"); options.add_argument("--disable-dev-shm-usage")
             app_data_path = os.path.join(get_app_data_path(), "ChromeProfile")
             os.makedirs(app_data_path, exist_ok=True)
             options.add_argument(f"--user-data-dir={app_data_path}")
 
             self.driver = webdriver.Chrome(service=service, options=options)
-            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                "source": """
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
-                    });
-                """
-            })
-            self.driver.get(login_url)
-            try:
-                while "nid.naver.com" in self.driver.current_url:
-                    time.sleep(1)
-            except WebDriverException:
-                self.driver = None
-                self.error.emit("로그인 대기 중 브라우저가 닫혔습니다.")
-                return
+            self.driver.get("https://nid.naver.com/nidlogin.login?url=https://creator-advisor.naver.com/")
             self.browser_opened.emit()
         except Exception as e:
             self.error.emit(f"브라우저 열기 실패: {e}")
@@ -479,7 +443,7 @@ class BackgroundWorker(QObject):
                     if d["data"] and isinstance(d["data"][0], dict) and "queryList" in d["data"][0]:
                         for r_idx, item in enumerate(d["data"][0]["queryList"], 1):
                             rc = self._parse_rank_change(item.get("rankChange"))
-                            all_trends_data.append({"카테고리": clean_display_text(cat), "순위": r_idx, "키워드": clean_display_text(item.get("query", "N/A")), "순위변동": rc})
+                            all_trends_data.append({"카테고리": cat, "순위": r_idx, "키워드": item.get("query", "N/A"), "순위변동": rc})
                 except Exception as e: self.log.emit("WARNING", f"[{cat}] 파싱/통신 실패: {e}")
                 time.sleep(0.3)
             self.trends_done.emit(all_trends_data)
@@ -505,7 +469,7 @@ class BackgroundWorker(QObject):
                     if d["data"] and isinstance(d["data"][0], dict) and "queryList" in d["data"][0]:
                         for r_idx, item in enumerate(d["data"][0]["queryList"], 1):
                             rc = self._parse_rank_change(item.get("rankChange"))
-                            all_age_trends.append({"연령대": clean_display_text(group_name), "순위": r_idx, "키워드": clean_display_text(item.get("query", "N/A")), "순위변동": rc})
+                            all_age_trends.append({"연령대": group_name, "순위": r_idx, "키워드": item.get("query", "N/A"), "순위변동": rc})
                 except Exception as e: self.log.emit("WARNING", f"[{group_name}] 파싱/통신 실패: {e}")
                 time.sleep(0.3)
             self.age_trends_done.emit(all_age_trends)
@@ -521,7 +485,7 @@ class BackgroundWorker(QObject):
             self.driver.set_script_timeout(10)
             res_text = self.driver.execute_async_script(self._get_fetch_script(url))
             d = self._validate_response(res_text)
-            results = [{"rank": str(i), "title": clean_display_text(item.get("title")), "link": item.get("url")} for i, item in enumerate(d.get("data", []), 1)]
+            results = [{"rank": str(i), "title": item.get("title"), "link": item.get("url")} for i, item in enumerate(d.get("data", []), 1)]
             self.main_inflow_done.emit(results)
         except Exception as e: self.error.emit(f"수집 실패: {e}")
 
@@ -545,7 +509,7 @@ class BackgroundWorker(QObject):
                     if "result" in r_json and (rows := r_json["result"].get("statDataList", [{}])[0].get("data", {}).get("rows")):
                         for dt, rank, cv, title, uri in zip(rows.get("date", []), rows.get("rank", []), rows.get("cv", []), rows.get("title", []), rows.get("uri", [])):
                             all_view.append({
-                                "날짜": dt, "순위": rank, "조회수": cv, "제목": clean_display_text(title),
+                                "날짜": dt, "순위": rank, "조회수": cv, "제목": title,
                                 "게시물_주소": (uri if uri.startswith("http") else f"https://blog.naver.com{uri}"),
                             })
                 except Exception as e: self.log.emit("WARNING", f"조회수 파싱 오류: {e}")
@@ -734,7 +698,6 @@ class KeywordApp(QMainWindow):
         super().__init__()
         self.current_version = get_current_version()
         self.setWindowTitle(f"Keyword Studio (Powered by Gemini 3.1 Pro) v{self.current_version}")
-        self.settings = QSettings("KeywordStudio", "KeywordStudio")
 
         self.is_working = False
         self._closing = False
@@ -748,10 +711,8 @@ class KeywordApp(QMainWindow):
         self.all_trend_data = []
         self.rank_sort_order = Qt.SortOrder.DescendingOrder
         self.currently_displayed_data = []
-        self._grid_tables = {}
         self.bv_current_date = QDate.currentDate()
         self.bv_calendar_popup = None
-        self.naver_main_df = None
 
         self.update_checker = UpdateChecker(self.current_version)
         self.update_checker.update_available.connect(self.on_update_available)
@@ -870,49 +831,6 @@ class KeywordApp(QMainWindow):
         btn.style().polish(btn)
         btn.setText(f"{original_text} (캐시됨)" if is_cached else original_text)
 
-    def _register_table_width_persistence(self, table, table_key):
-        self._grid_tables[table_key] = table
-        table.horizontalHeader().sectionResized.connect(
-            lambda _idx, _old, _new, key=table_key, target=table: self._save_table_widths(key, target)
-        )
-        self._apply_table_widths(table_key, table)
-
-    def _save_table_widths(self, table_key, table):
-        widths = [table.columnWidth(i) for i in range(table.columnCount())]
-        self.settings.setValue(f"grid_widths/{table_key}", json.dumps(widths))
-
-    def _apply_table_widths(self, table_key, table):
-        raw = self.settings.value(f"grid_widths/{table_key}", "")
-        if not raw:
-            return
-        try:
-            widths = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
-            return
-        for idx, width in enumerate(widths[:table.columnCount()]):
-            if isinstance(width, int) and width > 0:
-                table.setColumnWidth(idx, width)
-
-    def _clear_saved_table_widths(self):
-        self.settings.remove("grid_widths")
-
-    def _set_table_widths(self, table, widths):
-        for idx, width in enumerate(widths[:table.columnCount()]):
-            table.setColumnWidth(idx, width)
-
-    def _restore_default_table_widths(self):
-        default_widths = {
-            "trend_table": [160, 320, 80, 100],
-            "result_table": [120, 220, 120, 120, 120],
-            "autocomplete_table": [320],
-            "naver_main_table": [80, 620],
-            "blog_views_table": [120, 80, 100, 420],
-        }
-        for table_key, widths in default_widths.items():
-            table = self._grid_tables.get(table_key)
-            if table:
-                self._set_table_widths(table, widths)
-
     def check_views_cache_state(self):
         cid = self.bv_mode_group.checkedId()
         time_dim = {0: "DATE", 1: "WEEK", 2: "MONTH"}[cid]
@@ -946,7 +864,6 @@ class KeywordApp(QMainWindow):
         self.fetch_trends_button.setDisabled(disabled)
         self.fetch_age_trends_button.setDisabled(disabled)
         self.fetch_main_content_button.setDisabled(disabled)
-        self.export_main_excel_button.setDisabled(disabled or getattr(self, "naver_main_df", None) is None)
         self.fetch_blog_views_button.setDisabled(disabled)
         self.analyze_button.setDisabled(disabled)
         self.autocomplete_search_button.setDisabled(disabled)
@@ -1036,7 +953,6 @@ class KeywordApp(QMainWindow):
         self.trend_table.setHorizontalHeaderLabels(headers)
         self.trend_table.setSortingEnabled(False)
         self.trend_table.horizontalHeader().sectionClicked.connect(self.sort_trend_table)
-        self._register_table_width_persistence(self.trend_table, "trend_table")
         right_layout.addWidget(self.trend_table)
 
         main_splitter.addWidget(left_panel)
@@ -1093,7 +1009,6 @@ class KeywordApp(QMainWindow):
         self.result_table = QTableWidget()
         self.result_table.setColumnCount(5)
         self.result_table.setHorizontalHeaderLabels(["분류", "정제된 키워드", "총검색량", "총문서수", "기회지수"])
-        self._register_table_width_persistence(self.result_table, "result_table")
         right_layout.addWidget(self.result_table)
 
         main_splitter.addWidget(left_panel)
@@ -1151,7 +1066,6 @@ class KeywordApp(QMainWindow):
         self.autocomplete_table.setColumnCount(1)
         self.autocomplete_table.setHorizontalHeaderLabels(["자동완성 키워드"])
         self.autocomplete_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._register_table_width_persistence(self.autocomplete_table, "autocomplete_table")
         right_layout.addWidget(self.autocomplete_table)
 
         main_splitter.addWidget(left_panel)
@@ -1175,13 +1089,10 @@ class KeywordApp(QMainWindow):
         
         self.fetch_main_content_button = QPushButton("메인 유입콘텐츠 가져오기")
         self.fetch_main_content_button.setObjectName("primaryBtn")
-        self.export_main_excel_button = QPushButton("엑셀로 저장")
-        self.export_main_excel_button.setDisabled(True)
         hint_label = QLabel("💡 더블클릭으로 해당 링크 이동")
         hint_label.setStyleSheet("color: #868E96; font-size: 9pt;")
         
         left_layout.addWidget(self.fetch_main_content_button)
-        left_layout.addWidget(self.export_main_excel_button)
         left_layout.addWidget(hint_label)
         left_layout.addStretch()
 
@@ -1193,7 +1104,6 @@ class KeywordApp(QMainWindow):
         self.naver_main_table.setHorizontalHeaderLabels(["순위", "제목"])
         self.naver_main_table.verticalHeader().setVisible(False)
         self.naver_main_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._register_table_width_persistence(self.naver_main_table, "naver_main_table")
         right_layout.addWidget(self.naver_main_table)
 
         main_splitter.addWidget(left_panel)
@@ -1203,7 +1113,6 @@ class KeywordApp(QMainWindow):
         self.tabs.addTab(tab, "🏆 네이버 메인 유입")
         
         self.fetch_main_content_button.clicked.connect(self.start_fetch_naver_main)
-        self.export_main_excel_button.clicked.connect(self.export_naver_main_to_excel)
         self.naver_main_table.cellDoubleClicked.connect(self.open_browser_link)
 
     def create_blog_views_tab(self):
@@ -1265,7 +1174,6 @@ class KeywordApp(QMainWindow):
         self.blog_views_table = QTableWidget()
         self.blog_views_table.setColumnCount(4)
         self.blog_views_table.setHorizontalHeaderLabels(["날짜", "순위", "조회수", "제목"])
-        self._register_table_width_persistence(self.blog_views_table, "blog_views_table")
         right_layout.addWidget(self.blog_views_table)
 
         main_splitter.addWidget(left_panel)
@@ -1332,12 +1240,9 @@ class KeywordApp(QMainWindow):
         if self.bv_calendar_popup: self.bv_calendar_popup.hide()
 
     def reset_ui(self):
-        self._clear_saved_table_widths()
-        self._restore_default_table_widths()
         self.cached_data = {"trends": None, "age_trends": None, "main_inflow": None, "blog_views": {}, "analysis": {}, "auto": {}}
         self.results_df = None
         self.blog_views_df = None
-        self.naver_main_df = None
         self.trend_table.setRowCount(0)
         self.all_trend_data = []
         self.category_filter_combo.blockSignals(True)
@@ -1370,7 +1275,6 @@ class KeywordApp(QMainWindow):
         self.status_label_bv.setText("조회할 기간을 선택하고 버튼을 눌러주세요.")
         self.progress_bar_bv.setValue(0)
         self.export_blog_views_button.setDisabled(True)
-        self.export_main_excel_button.setDisabled(True)
 
         self.update_button_style(self.fetch_trends_button, False, "2-1. 주제별 수집")
         self.update_button_style(self.fetch_age_trends_button, False, "2-2. 연령별 수집")
@@ -1390,7 +1294,7 @@ class KeywordApp(QMainWindow):
     @pyqtSlot()
     def on_browser_opened(self):
         self._finish_task_state()
-        QMessageBox.information(self, "안내", "로그인이 완료되었습니다.\n브라우저를 켜둔 상태에서 프로그램의 수집 버튼을 눌러주세요.")
+        QMessageBox.information(self, "안내", "브라우저가 열렸습니다!\n로그인 후 창을 끄지 말고 프로그램의 수집 버튼을 눌러주세요.")
 
     def start_trend_fetching(self):
         if self.is_working: return
@@ -1681,33 +1585,27 @@ class KeywordApp(QMainWindow):
 
     def on_autocomplete_finished(self, kw):
         self._finish_task_state()
-        cleaned_kw = [clean_display_text(item) for item in kw if clean_display_text(item)]
         if kw:
             ck = getattr(self, "current_auto_cache_key", None)
             if ck and ck not in self.cached_data["auto"]:
-                self._add_to_cache(self.cached_data["auto"], ck, cleaned_kw, limit=50)
+                self._add_to_cache(self.cached_data["auto"], ck, kw, limit=50)
             self.check_auto_cache_state()
         self.autocomplete_table.setUpdatesEnabled(False)
-        self.autocomplete_table.setRowCount(len(cleaned_kw))
-        for r, k in enumerate(cleaned_kw):
+        self.autocomplete_table.setRowCount(len(kw))
+        for r, k in enumerate(kw):
             self.autocomplete_table.setItem(r, 0, QTableWidgetItem(k))
         self.autocomplete_table.setUpdatesEnabled(True)
-        if not cleaned_kw: self.log_message("WARNING", "자동완성 키워드가 0건입니다.")
+        if not kw: self.log_message("WARNING", "자동완성 키워드가 0건입니다.")
 
     def on_naver_main_finished(self, res):
         self._finish_task_state()
         if res:
             self.cached_data["main_inflow"] = res
             self.update_button_style(self.fetch_main_content_button, True, "메인 유입콘텐츠 가져오기")
-            self.naver_main_df = pd.DataFrame(res)
-            self.export_main_excel_button.setDisabled(False)
-        else:
-            self.naver_main_df = None
-            self.export_main_excel_button.setDisabled(True)
         self.naver_main_table.setUpdatesEnabled(False)
         self.naver_main_table.setRowCount(len(res))
         for r, it in enumerate(res):
-            ri, ti = QTableWidgetItem(str(it["rank"])), QTableWidgetItem(clean_display_text(it["title"]))
+            ri, ti = QTableWidgetItem(it["rank"]), QTableWidgetItem(it["title"])
             ri.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             ti.setData(Qt.ItemDataRole.UserRole, it["link"])
             self.naver_main_table.setItem(r, 0, ri)
@@ -1847,12 +1745,6 @@ class KeywordApp(QMainWindow):
         except Exception as e:
             self.log_message("ERROR", f"엑셀 저장 중 알 수 없는 오류: {e}")
             QMessageBox.critical(self, "오류", f"엑셀 저장 중 오류가 발생했습니다:\n{e}")
-
-    def export_naver_main_to_excel(self):
-        if getattr(self, "naver_main_df", None) is None or self.naver_main_df.empty: return
-        os.makedirs("output", exist_ok=True)
-        self.naver_main_df.to_excel(os.path.join("output", f"naver_main_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"), index=False)
-        QMessageBox.information(self, "성공", "네이버 메인 유입 리스트를 엑셀로 저장했습니다.")
 
     def export_blog_views_to_excel(self):
         if getattr(self, "blog_views_df", None) is None or self.blog_views_df.empty: return
